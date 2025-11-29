@@ -1,0 +1,5 @@
+{
+  "name": "Wrytica AI",
+  "description": "An advanced, agentic AI writing assistant featuring paraphrasing, grammar checking, summarization, and autonomous co-writing capabilities powered by Gemini 2.5.",
+  "requestFramePermissions": []
+}
