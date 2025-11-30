@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../contexts/AppContext';
-import { DEFAULT_CONFIGS, LLMProvider } from '../utils';
+import { DEFAULT_CONFIGS, LLMProvider, LLMConfig } from '../utils';
 import { Save, RotateCcw, Server, Shield, Globe, Activity, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { AIService } from '../services/aiService';
 
@@ -9,14 +9,34 @@ export const Settings: React.FC = () => {
   
   const [testStatus, setTestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
+  
+  // Store provider-specific configs in localStorage
+  const [providerConfigs, setProviderConfigs] = useState<Record<LLMProvider, LLMConfig>>(() => {
+    const saved = localStorage.getItem('wrytica_provider_configs');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+    return {
+      gemini: DEFAULT_CONFIGS.gemini,
+      ollama: DEFAULT_CONFIGS.ollama,
+      lmstudio: DEFAULT_CONFIGS.lmstudio
+    };
+  });
+
+  // Save current config to provider-specific storage when it changes
+  React.useEffect(() => {
+    const newProviderConfigs = {
+      ...providerConfigs,
+      [config.provider]: config
+    };
+    setProviderConfigs(newProviderConfigs);
+    localStorage.setItem('wrytica_provider_configs', JSON.stringify(newProviderConfigs));
+  }, [config]);
 
   const handleProviderChange = (provider: LLMProvider) => {
-    // When switching providers, load defaults for that provider if not already custom set
-    const newConfig = { ...DEFAULT_CONFIGS[provider] };
-    if (provider === 'gemini' && config.apiKey) {
-      newConfig.apiKey = config.apiKey;
-    }
-    updateConfig(newConfig);
+    // Load saved config for this provider, or use defaults
+    const savedConfig = providerConfigs[provider] || DEFAULT_CONFIGS[provider];
+    updateConfig({ ...savedConfig, provider });
     setTestStatus('idle');
     setTestMessage('');
   };
