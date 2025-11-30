@@ -94,7 +94,11 @@ export class LocalLlmService {
   private async handleFetchError(error: any) {
     let msg = error.message;
     if (error.name === 'AbortError') {
-      msg = "Request timed out. The local model is taking too long to respond. For LM Studio, ensure a model is loaded and ready.";
+      msg = "Request timed out (120s). The local model is taking too long to respond. Try:\n" +
+            "• Use a smaller/faster model\n" +
+            "• Reduce conversation history\n" +
+            "• For LM Studio: Ensure model is loaded and GPU acceleration is enabled\n" +
+            "• For Ollama: Check if model is running with 'ollama list'";
     } else if (msg === 'Failed to fetch') {
       const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
       if (isHttps && this.config.baseUrl.includes('http://')) {
@@ -413,7 +417,8 @@ export class LocalLlmService {
     
     if (this.config.provider === 'ollama') {
        const controller = new AbortController();
-       const timeoutId = setTimeout(() => controller.abort(), 60000);
+       // Increased timeout to 120 seconds for chat (models can be slower with conversation context)
+       const timeoutId = setTimeout(() => controller.abort(), 120000);
        try {
         const response = await fetch(`${this.config.baseUrl}/api/chat`, {
           method: 'POST',
@@ -430,6 +435,11 @@ export class LocalLlmService {
           signal: controller.signal
         });
         clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          throw new Error(`Ollama returned ${response.status}: ${response.statusText}`);
+        }
+        
         const data = await response.json();
         return data.message.content;
       } catch (e) {
@@ -438,13 +448,44 @@ export class LocalLlmService {
         return "";
       }
     } else {
-      // LM Studio
-      const msgs = [
-        { role: 'system', content: system },
-        ...history,
-        { role: 'user', content: newMessage }
-      ];
-      return this.fetchOpenAICompat(msgs, false);
+      // LM Studio - also increase timeout for chat
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
+      
+      try {
+        const msgs = [
+          { role: 'system', content: system },
+          ...history,
+          { role: 'user', content: newMessage }
+        ];
+        
+        const response = await fetch(`${this.config.baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: this.config.modelName,
+            messages: msgs,
+            temperature: 0.3,
+            max_tokens: 2048,
+            stream: false
+          }),
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`LM Studio returned ${response.status}: ${response.statusText}. ${errorText}`);
+        }
+        
+        const data = await response.json();
+        return data.choices[0].message.content;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        await this.handleFetchError(error);
+        return "";
+      }
     }
   }
 }
