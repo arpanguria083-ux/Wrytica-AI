@@ -1,5 +1,5 @@
 <div align="center">
-<img width="1200" height="475" alt="Wrytica AI - Advanced Writing Assistant" src="./assets/banner.png" />
+<img width="1200" height="475" alt="Wrytica AI - Advanced Writing Assistant" src="./assets/Sleek Wrytica AI Digital Logo Concept.png" />
 </div>
 
 # Wrytica AI - Advanced Writing Assistant
