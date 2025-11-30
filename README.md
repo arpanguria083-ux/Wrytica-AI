@@ -17,7 +17,7 @@ An intelligent AI writing assistant featuring paraphrasing, grammar checking, su
 
 ## Run Locally
 
-**Prerequisites:**  Node.js 18+
+**Prerequisites:** Node.js 18+
 
 1. Install dependencies:
    ```bash
