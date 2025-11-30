@@ -48,6 +48,30 @@ OLLAMA_ORIGINS='*' ollama serve
 2. Load a model and start the local server
 3. Default endpoint: http://localhost:1234
 
+## Build for Production
+
+### Automated Build (Windows)
+```bash
+# Run the automated build script:
+build.bat
+# Or using PowerShell:
+.\build.ps1
+```
+
+### Manual Build
+```bash
+npm run build
+npm run preview  # Test the build locally
+```
+
+The production build will be in the `dist/` folder. See [BUILD_GUIDE.md](BUILD_GUIDE.md) for detailed instructions.
+
 ## Production Deployment
 
 ✅ **Security**: Users provide their own API keys through the UI. API keys are stored locally in the browser and never sent to external servers.
+
+**Deploy to:**
+- Vercel: `vercel`
+- Netlify: `netlify deploy --prod --dir=dist`
+- GitHub Pages: Upload `dist/` folder
+- Any static host: Upload contents of `dist/` folder

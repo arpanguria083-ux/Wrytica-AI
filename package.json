@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:clean": "rmdir /s /q dist 2>nul || rm -rf dist && npm run build",
+    "build:preview": "npm run build && npm run preview",
+    "install:build": "npm install && npm run build"
   },
   "dependencies": {
     "react-router-dom": "^7.9.6",
