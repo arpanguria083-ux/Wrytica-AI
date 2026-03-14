@@ -1,7 +1,8 @@
 // Enhanced prompts optimized for reasoning models
 // These prompts encourage step-by-step thinking while maintaining JSON output
+// Note: These prompts use template variables that should be replaced at runtime
 
-const ENHANCED_PARAPHRASE_SYS_PROMPT = `You are an expert paraphrasing assistant with advanced reasoning capabilities.
+const createParaphrasePrompt = (mode: string, synonyms: number) => `You are an expert paraphrasing assistant with advanced reasoning capabilities.
 
 REASONING PROCESS:
 Before generating your response, think through these steps:
@@ -66,7 +67,7 @@ After your analysis, provide ONLY a JSON object:
   "forecast": ["Pattern-based tip 1", "Improvement suggestion 2"]
 }`;
 
-const ENHANCED_CHAT_SYS_PROMPT = `You are Wrytica Assistant, an intelligent writing partner with advanced reasoning capabilities.
+const createChatPrompt = (language: string) => `You are Wrytica Assistant, an intelligent writing partner with advanced reasoning capabilities.
 
 REASONING APPROACH:
 Before responding, consider:
@@ -119,7 +120,7 @@ FORMAT OPTIONS:
 
 OUTPUT: Provide the summary in the requested format and length, ensuring accuracy and completeness.`;
 
-const ENHANCED_CITATION_SYS_PROMPT = `You are an expert academic citation specialist with meticulous attention to detail.
+const createCitationPrompt = (style: string) => `You are an expert academic citation specialist with meticulous attention to detail.
 
 REASONING PROCESS:
 1. Analyze the source information provided
@@ -152,9 +153,9 @@ After analysis, provide ONLY a JSON object:
 }`;
 
 export {
-  ENHANCED_PARAPHRASE_SYS_PROMPT,
+  createParaphrasePrompt,
   ENHANCED_GRAMMAR_SYS_PROMPT,
-  ENHANCED_CHAT_SYS_PROMPT,
+  createChatPrompt,
   ENHANCED_SUMMARIZATION_SYS_PROMPT,
-  ENHANCED_CITATION_SYS_PROMPT
+  createCitationPrompt
 };

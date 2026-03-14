@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { PenTool, CheckCircle, FileText, MessageSquare, Settings, Feather, Quote } from 'lucide-react';
+import { PenTool, CheckCircle, FileText, MessageSquare, Settings, Feather, Quote, BookOpen, Layers, Camera, History } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const navItems = [
@@ -9,6 +9,11 @@ export const Sidebar: React.FC = () => {
     { name: 'Summarizer', path: '/summarizer', icon: FileText },
     { name: 'Citation Generator', path: '/citation', icon: Quote },
     { name: 'AI Chat', path: '/chat', icon: MessageSquare },
+    { name: 'Knowledge Base', path: '/knowledge', icon: BookOpen },
+    { name: 'Document Viewer', path: '/documents', icon: FileText },
+    { name: 'History & Memory', path: '/history', icon: History },
+    { name: 'OCR & Scan', path: '/ocr', icon: Camera },
+    { name: 'Agent Planner', path: '/agent', icon: Layers },
   ];
 
   const activeClass = "bg-primary-50 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400 border-r-4 border-primary-500";

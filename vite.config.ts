@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
       server: {
-        port: 3000,
+        port: 5180,
         host: '0.0.0.0',
       },
       plugins: [react()],
@@ -15,6 +15,22 @@ export default defineConfig(({ mode }) => {
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
+        }
+      },
+      build: {
+        chunkSizeWarningLimit: 1100,
+        rollupOptions: {
+          output: {
+            manualChunks: {
+              // Large dependencies that should be lazy-loaded
+              'pdfjs': ['pdfjs-dist'],
+              'tesseract': ['tesseract.js'],
+              // React and router
+              'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+              // Google AI SDK
+              'vendor-gemini': ['@google/genai'],
+            }
+          }
         }
       }
     };

@@ -1,36 +1,39 @@
-import { LLMConfig, extractJson, ParaphraseResponse, GrammarError, SummaryLength, SummaryFormat, CitationResponse, CitationStyle, ChatMessage, GrammarCheckResult } from '../utils';
-import { detectModelCapabilities, shouldUseReasoningPrompts } from '../utils/modelCapabilities';
+import { LLMConfig, extractJson, ParaphraseResponse, GrammarError, SummaryLength, SummaryFormat, CitationResponse, CitationStyle, ChatMessage, GrammarCheckResult, ContextEnhancement, PageIndexPromptNode, PageIndexSelection } from '../utils';
+import { shouldUseReasoningPromptsForContext } from '../utils/modelCapabilities';
 
 // --- Prompts (Simplified for generic Llama-3/Mistral instruction following) ---
 
 const PARAPHRASE_SYS_PROMPT = `You are a JSON-only paraphrasing assistant.
 
+CRITICAL: Never include any thinking, reasoning, or chain-of-thought in your output.
+Never use \<|thinking|> or similar tokens.
+Never write "Thinking Process:" or explain your reasoning.
+
 GUIDELINES:
 1. Output must be a single JSON object only
 2. No added explanations, no markdown, no additional content
 3. Follow this exact pattern: {"paraphrasedText": "text", "tone": "tone", "confidence": 0.9}
+4. Start your response directly with the JSON - no preamble
 
 Sample:
 User: "Paraphrase: Hello world"
 You: {"paraphrasedText": "Greetings, world", "tone": "formal", "confidence": 0.9}
 
-IMPORTANT: Ensure the whole reply is valid and directly parseable JSON.`;
+IMPORTANT: Start your response with { and end with }. No thinking or explanations.`;
 
-const ENHANCED_PARAPHRASE_SYS_PROMPT = `You are a JSON-only paraphrasing assistant with reasoning capabilities.
+const ENHANCED_PARAPHRASE_SYS_PROMPT = `You are a JSON-only paraphrasing assistant.
 
-REASONING PROCESS - Think through these steps first:
-1. Analyze the original text's meaning, tone, and structure
-2. Understand the target style and creativity requirements
-3. Plan your paraphrasing approach
-4. Generate the paraphrased version
-5. Evaluate for accuracy and style compliance
+CRITICAL: Never include any thinking, reasoning, or chain-of-thought in your output.
+Never write "Thinking Process:" or explain your reasoning.
+Do NOT use <|thinking|> or similar tokens.
 
 GUIDELINES:
-1. Output must be a single JSON object only
-2. No added explanations, no markdown, no additional content
-3. Follow this exact pattern: {"paraphrasedText": "text", "tone": "tone", "confidence": 0.9}
+1. Output MUST be a single JSON object only.
+2. Start your response IMMEDIATELY with { - never include any preamble.
+3. End your response IMMEDIATELY with } - never include any trailing text.
+4. Follow this pattern exactly: {"paraphrasedText": "text", "tone": "tone", "confidence": 0.9}
 
-IMPORTANT: After your thinking process, provide ONLY the JSON object.`;
+IMPORTANT: Provide ONLY the JSON object. Failure to do so will break the system.`;
 
 const GRAMMAR_SYS_PROMPT = `You are a grammar and style checker. 
 CRITICAL: You MUST respond with ONLY valid JSON in this exact format:
@@ -63,6 +66,8 @@ const CITATION_SYS_PROMPT = `You are a citation generator.
 CRITICAL: You MUST respond with ONLY valid JSON in this exact format:
 {"formatted_citation": "complete citation", "bibtex": "bibtex entry", "components": {"author": "author name", "date": "publication date", "title": "title", "source": "journal/publisher", "doi_or_url": "doi or url"}}
 
+Supported styles: APA 7, MLA 9, Chicago, Harvard, IEEE, Vancouver, Turabian, ACS, AMA, ASA
+
 Do not include any other text, explanations, or markdown. Just the JSON object.`;
 
 const ENHANCED_CITATION_SYS_PROMPT = `You are a citation generator with advanced analytical capabilities.
@@ -74,6 +79,8 @@ SYSTEMATIC CITATION PROCESS - Think through these steps:
 4. Apply citation style rules with precision
 5. Verify formatting accuracy and completeness
 
+Supported styles: APA 7, MLA 9, Chicago, Harvard, IEEE, Vancouver, Turabian, ACS, AMA, ASA
+
 CRITICAL: You MUST respond with ONLY valid JSON in this exact format:
 {"formatted_citation": "complete citation", "bibtex": "bibtex entry", "components": {"author": "author name", "date": "publication date", "title": "title", "source": "journal/publisher", "doi_or_url": "doi or url"}}
 
@@ -81,6 +88,279 @@ Do not include any other text, explanations, or markdown. Just the JSON object.`
 
 export class LocalLlmService {
   constructor(private config: LLMConfig) {}
+
+  /**
+   * Paraphrase with temperature control (for middleware with multiple candidates)
+   */
+  async paraphraseWithTemperature(
+    text: string,
+    mode: string,
+    language: string = 'English',
+    synonyms: number = 50,
+    enhancement?: ContextEnhancement,
+    options?: { phraseFlip?: boolean; sentenceRestructure?: boolean; fluency?: boolean; sentenceCompression?: boolean; wordLevel?: boolean },
+    temperature: number = 0.5
+  ): Promise<ParaphraseResponse> {
+    // Build mode-specific instructions with intensity awareness
+    let modeInstruction = '';
+    const modeLower = mode.toLowerCase();
+    
+    switch (modeLower) {
+      case 'standard':
+        modeInstruction = 'Rewrite this text with balanced rewording, maintaining the original meaning and tone.';
+        break;
+      case 'fluency':
+        modeInstruction = 'Improve the flow, rhythm, and grammatical smoothness while rewording.';
+        break;
+      case 'humanize':
+        modeInstruction = 'Make the text sound more natural, emotional, conversational, and human-like.';
+        break;
+      case 'formal':
+        modeInstruction = 'Use sophisticated vocabulary, avoid contractions, and maintain a professional tone.';
+        break;
+      case 'academic':
+        modeInstruction = 'Use scholarly tone, precise terminology, and objective voice appropriate for academic writing.';
+        break;
+      case 'simple':
+        modeInstruction = 'Use plain language, shorter sentences, accessible vocabulary for general audience.';
+        break;
+      case 'creative':
+        modeInstruction = 'Use evocative language, varied sentence structure, be expressive and creative.';
+        break;
+      case 'expand':
+        modeInstruction = 'Add relevant details, context, and depth to expand on the original meaning without redundancy.';
+        break;
+      case 'shorten':
+        modeInstruction = 'Condense the text to convey the same meaning in fewer words while preserving essential information.';
+        break;
+      case 'custom':
+        modeInstruction = 'Follow the custom instructions provided.';
+        break;
+      default:
+        modeInstruction = 'Rewrite this text appropriately.';
+    }
+
+    const optionInstructions = this.getOptionInstructions(options);
+    
+    // Map synonyms level to creativity instruction
+    let creativityInstruction = '';
+    if (synonyms <= 25) {
+      creativityInstruction = 'Use minimal word changes, stay very close to original phrasing and structure.';
+    } else if (synonyms <= 50) {
+      creativityInstruction = 'Use moderate word substitutions and some sentence restructuring.';
+    } else if (synonyms <= 75) {
+      creativityInstruction = 'Use creative word choices, varied sentence structures, and expressive language.';
+    } else {
+      creativityInstruction = 'Use highly creative language, extensive vocabulary variation, and diverse sentence patterns. Be bold with changes.';
+    }
+
+    // Include any additional instructions from enhancement
+    const additionalText = enhancement?.additionalInstructions || '';
+    const prompt = `${modeInstruction} ${creativityInstruction}${optionInstructions}${additionalText ? ` ${additionalText}` : ''} Output in ${language}. Text: "${text}"`;
+    
+    const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
+    const systemPrompt = useReasoning ? ENHANCED_PARAPHRASE_SYS_PROMPT : PARAPHRASE_SYS_PROMPT;
+
+    try {
+      // Call with temperature parameter for diversity in candidates
+      const response = await this.generateWithTemp(prompt, systemPrompt, true, temperature);
+      const cleanResponse = response.trim();
+      const result = extractJson(cleanResponse);
+      
+      if (!result.paraphrasedText) {
+        throw new Error('Response missing paraphrasedText field');
+      }
+      
+      return {
+        paraphrasedText: result.paraphrasedText,
+        tone: result.tone || 'Neutral',
+        confidence: typeof result.confidence === 'number' ? result.confidence : 0.8
+      };
+    } catch (error) {
+      console.error('Paraphrase with temperature error in LocalLlmService:', error);
+      throw error;
+    }
+  }
+
+  // Internal method to generate with custom temperature
+  private async generateWithTemp(prompt: string, system: string, jsonMode: boolean = false, temperature: number = 0.5): Promise<string> {
+    if (this.config.provider === 'ollama') {
+      return this.fetchOllamaWithTemp(prompt, system, jsonMode, temperature);
+    } else {
+      return this.fetchOpenAICompatWithTemp(prompt, system, jsonMode, temperature);
+    }
+  }
+
+  private async fetchOllamaWithTemp(prompt: string, system: string, jsonMode: boolean = false, temperature: number = 0.5): Promise<string> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300000);
+
+    try {
+      const response = await fetch(`${this.config.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.config.modelName,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: prompt }
+          ],
+          stream: false,
+          format: jsonMode ? 'json' : undefined,
+          options: {
+            temperature: temperature,
+            num_ctx: this.config.contextLimit,
+            num_predict: this.config.maxCompletionTokens // Added max_tokens for Ollama
+          }
+        }),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+
+      if (!response.ok) throw new Error(`Ollama API returned ${response.status}: ${response.statusText}`);
+      const data = await response.json();
+      return data.message.content;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      await this.handleFetchError(error);
+      return "";
+    }
+  }
+
+  private async fetchOpenAICompatWithTemp(prompt: string, system: string, jsonMode: boolean = false, temperature: number = 0.5): Promise<string> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300000);
+
+    try {
+      let modelName = this.config.modelName;
+      if (modelName === 'local-model') {
+        try {
+          const modelsResponse = await fetch(`${this.config.baseUrl}/v1/models`);
+          if (modelsResponse.ok) {
+            const modelsData = await modelsResponse.json();
+            if (modelsData.data && modelsData.data.length > 0) {
+              modelName = modelsData.data[0].id;
+            }
+          }
+        } catch (e) {
+          console.warn('Could not fetch available models, using configured model name');
+        }
+      }
+
+      const response = await fetch(`${this.config.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: prompt }
+          ],
+          temperature: temperature,
+          max_tokens: this.config.maxCompletionTokens, // Replaced hardcoded value
+          stream: false
+        }),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Local Server returned ${response.status}: ${response.statusText}. Response: ${errorText}`);
+      }
+      const data = await response.json();
+      return data.choices[0].message.content;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      await this.handleFetchError(error);
+      return "";
+    }
+  }
+
+  /**
+   * Paraphrase with options (for middleware)
+   */
+  async paraphraseWithOptions(
+    text: string,
+    mode: string,
+    language: string = 'English',
+    synonyms: number = 50,
+    enhancement?: ContextEnhancement,
+    options?: { phraseFlip?: boolean; sentenceRestructure?: boolean; fluency?: boolean; sentenceCompression?: boolean; wordLevel?: boolean }
+  ): Promise<ParaphraseResponse> {
+    // Build mode-specific instructions
+    let modeInstruction = '';
+    switch (mode) {
+      case 'Standard':
+        modeInstruction = 'Rewrite this text with balanced rewording, maintaining the original meaning.';
+        break;
+      case 'Fluency':
+        modeInstruction = 'Improve the flow and fix any grammatical awkwardness while rewording.';
+        break;
+      case 'Humanize':
+        modeInstruction = 'Make the text sound more natural, emotional, and conversational.';
+        break;
+      case 'Formal':
+        modeInstruction = 'Use sophisticated vocabulary, avoid contractions, and maintain a professional tone.';
+        break;
+      case 'Academic':
+        modeInstruction = 'Use scholarly tone, precise terminology, and objective voice.';
+        break;
+      case 'Simple':
+        modeInstruction = 'Use plain language, shorter sentences, accessible to general audience.';
+        break;
+      case 'Creative':
+        modeInstruction = 'Use evocative language, vary sentence structure, and be expressive.';
+        break;
+      case 'Expand':
+        modeInstruction = 'Increase length by adding relevant details and depth without fluff.';
+        break;
+      case 'Shorten':
+        modeInstruction = 'Concisely convey the meaning in fewer words.';
+        break;
+      default:
+        modeInstruction = 'Rewrite this text with appropriate rewording.';
+    }
+
+    const optionInstructions = this.getOptionInstructions(options);
+    
+    let creativityInstruction = '';
+    if (synonyms <= 25) {
+      creativityInstruction = 'Use minimal word changes, stay very close to original phrasing.';
+    } else if (synonyms <= 50) {
+      creativityInstruction = 'Use moderate word substitutions and some sentence restructuring.';
+    } else if (synonyms <= 75) {
+      creativityInstruction = 'Use creative word choices and varied sentence structures.';
+    } else {
+      creativityInstruction = 'Use highly creative language, extensive vocabulary variation, and diverse sentence patterns.';
+    }
+
+    const prompt = `${modeInstruction} ${creativityInstruction}${optionInstructions} Output in ${language}. Text: "${text}"`;
+    
+    const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
+    const systemPrompt = useReasoning ? ENHANCED_PARAPHRASE_SYS_PROMPT : PARAPHRASE_SYS_PROMPT;
+    
+    try {
+      const response = await this.generate(prompt, systemPrompt, true);
+      const cleanResponse = response.trim();
+      const result = extractJson(cleanResponse);
+      
+      if (!result.paraphrasedText) {
+        throw new Error('Response missing paraphrasedText field');
+      }
+      
+      return {
+        paraphrasedText: result.paraphrasedText,
+        tone: result.tone || 'Neutral',
+        confidence: typeof result.confidence === 'number' ? result.confidence : 0.8
+      };
+    } catch (error) {
+      console.error('Paraphrase with options error in LocalLlmService:', error);
+      throw error;
+    }
+  }
 
   private getFetchOptions(body: any, jsonMode: boolean, signal?: AbortSignal) {
     return {
@@ -94,7 +374,7 @@ export class LocalLlmService {
   private async handleFetchError(error: any) {
     let msg = error.message;
     if (error.name === 'AbortError') {
-      msg = "Request timed out (120s). The local model is taking too long to respond. Try:\n" +
+      msg = "Request timed out (300s). The local model is taking too long to respond. Try:\n" +
             "• Use a smaller/faster model\n" +
             "• Reduce conversation history\n" +
             "• For LM Studio: Ensure model is loaded and GPU acceleration is enabled\n" +
@@ -115,18 +395,22 @@ export class LocalLlmService {
 
   private async fetchOllama(prompt: string, system: string, jsonMode: boolean = false): Promise<string> {
     const controller = new AbortController();
-    // Long timeout for generation (60s)
-    const timeoutId = setTimeout(() => controller.abort(), 60000); 
+    // Long timeout for generation (300s)
+    const timeoutId = setTimeout(() => controller.abort(), 300000); 
 
     try {
-      const response = await fetch(`${this.config.baseUrl}/api/generate`, this.getFetchOptions({
+      const response = await fetch(`${this.config.baseUrl}/api/chat`, this.getFetchOptions({
         model: this.config.modelName,
-        prompt: `<|system|>\n${system}\n<|user|>\n${prompt}\n<|assistant|>\n`, // Llama 3 format usually
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: prompt }
+        ],
         stream: false,
         format: jsonMode ? 'json' : undefined,
         options: {
           temperature: 0.3,
-          num_ctx: this.config.contextLimit
+          num_ctx: this.config.contextLimit,
+          num_predict: this.config.maxCompletionTokens // Added max_tokens for Ollama
         }
       }, jsonMode, controller.signal));
       
@@ -134,7 +418,7 @@ export class LocalLlmService {
 
       if (!response.ok) throw new Error(`Ollama API returned ${response.status}: ${response.statusText}`);
       const data = await response.json();
-      return data.response;
+      return data.message.content;
     } catch (error) {
       clearTimeout(timeoutId);
       await this.handleFetchError(error);
@@ -144,7 +428,7 @@ export class LocalLlmService {
 
   private async fetchOpenAICompat(messages: any[], jsonMode: boolean = false): Promise<string> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const timeoutId = setTimeout(() => controller.abort(), 300000);
 
     try {
       // If using default 'local-model', try to get the first available model
@@ -168,10 +452,8 @@ export class LocalLlmService {
         model: modelName,
         messages: messages,
         temperature: 0.3,
-        max_tokens: 2048,
+        max_tokens: this.config.maxCompletionTokens, // Replaced hardcoded value
         stream: false
-        // Removed response_format as many models don't support it
-        // Instead, rely on system prompt to request JSON format
       }, jsonMode, controller.signal));
       
       clearTimeout(timeoutId);
@@ -233,7 +515,31 @@ export class LocalLlmService {
     }
   }
 
-  async paraphrase(text: string, mode: string, language: string = 'English', synonyms: number = 50): Promise<ParaphraseResponse> {
+  // Get QuillBot-style option instructions for local LLMs
+  private getOptionInstructions(options?: { phraseFlip?: boolean; sentenceRestructure?: boolean; fluency?: boolean; sentenceCompression?: boolean; wordLevel?: boolean }): string {
+    if (!options) return '';
+    const instructions: string[] = [];
+    
+    if (options.phraseFlip) {
+      instructions.push('Also flip parallel structures like "not only X but also Y" to "Y as well as X".');
+    }
+    if (options.sentenceRestructure) {
+      instructions.push('Also change word order and sentence structure while preserving meaning.');
+    }
+    if (options.fluency) {
+      instructions.push('Also improve grammatical accuracy and natural flow.');
+    }
+    if (options.sentenceCompression) {
+      instructions.push('Also remove redundant words and condense sentences.');
+    }
+    if (options.wordLevel) {
+      instructions.push('Also focus on word-level substitutions with appropriate synonyms.');
+    }
+    
+    return instructions.length > 0 ? ` ${instructions.join(' ')}` : '';
+  }
+
+  async paraphrase(text: string, mode: string, language: string = 'English', synonyms: number = 50, enhancement?: ContextEnhancement, options?: { phraseFlip?: boolean; sentenceRestructure?: boolean; fluency?: boolean; sentenceCompression?: boolean; wordLevel?: boolean }): Promise<ParaphraseResponse> {
     // Build mode-specific instructions
     let modeInstruction = '';
     switch (mode) {
@@ -270,6 +576,9 @@ export class LocalLlmService {
         break;
     }
 
+    // Add QuillBot-style option instructions
+    const optionInstructions = this.getOptionInstructions(options);
+
     // Map synonyms level (0-100) to creativity instruction
     let creativityInstruction = '';
     if (synonyms <= 25) {
@@ -282,10 +591,10 @@ export class LocalLlmService {
       creativityInstruction = 'Use highly creative language, extensive vocabulary variation, and diverse sentence patterns.';
     }
 
-    const prompt = `${modeInstruction} ${creativityInstruction} Output in ${language}. Text: "${text}"`;
+    const prompt = `${modeInstruction} ${creativityInstruction}${optionInstructions} Output in ${language}. Text: "${text}"`;
     
     // Check if model supports reasoning
-    const useReasoning = shouldUseReasoningPrompts(this.config.modelName);
+    const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
     const systemPrompt = useReasoning ? ENHANCED_PARAPHRASE_SYS_PROMPT : PARAPHRASE_SYS_PROMPT;
     
     try {
@@ -343,15 +652,14 @@ export class LocalLlmService {
     }
   }
 
-  async checkGrammar(text: string, history: string = '', language: string = 'English'): Promise<GrammarCheckResult> {
+  async checkGrammar(text: string, history: string = '', language: string = 'English', enhancement?: ContextEnhancement): Promise<GrammarCheckResult> {
     const prompt = `Check this text for grammar errors. Explain reasons in ${language}.
     Current Text: "${text}"
     Reference/History Patterns: "${history}"
     
     Provide 'errors' and 'forecast' (predicting future mistakes based on this history/pattern).`;
     
-    // Check if model supports reasoning
-    const useReasoning = shouldUseReasoningPrompts(this.config.modelName);
+    const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
     const systemPrompt = useReasoning ? ENHANCED_GRAMMAR_SYS_PROMPT : GRAMMAR_SYS_PROMPT;
     
     const response = await this.generate(prompt, systemPrompt, true);
@@ -366,11 +674,10 @@ export class LocalLlmService {
     return { errors, forecast };
   }
 
-  async summarize(text: string, length: SummaryLength, format: SummaryFormat, language: string = 'English'): Promise<string> {
+  async summarize(text: string, length: SummaryLength, format: SummaryFormat, language: string = 'English', enhancement?: ContextEnhancement): Promise<string> {
     const prompt = `Summarize this text in ${language}. Length: ${length}. Format: ${format}. Text: "${text}"`;
     
-    // Check if model supports reasoning
-    const useReasoning = shouldUseReasoningPrompts(this.config.modelName);
+    const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
     const system = useReasoning ? 
       `You are a summarization expert with advanced comprehension abilities.
       
@@ -387,11 +694,10 @@ export class LocalLlmService {
     return await this.generate(prompt, system, false);
   }
 
-  async generateCitation(sourceInfo: string, style: CitationStyle, language: string = 'English'): Promise<CitationResponse> {
+  async generateCitation(sourceInfo: string, style: CitationStyle, language: string = 'English', enhancement?: ContextEnhancement): Promise<CitationResponse> {
     const prompt = `Create a ${style} citation for: "${sourceInfo}". Ensure explanations or extracted components are in ${language}.`;
     
-    // Check if model supports reasoning
-    const useReasoning = shouldUseReasoningPrompts(this.config.modelName);
+    const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
     const systemPrompt = useReasoning ? ENHANCED_CITATION_SYS_PROMPT : CITATION_SYS_PROMPT;
     
     const response = await this.generate(prompt, systemPrompt, true);
@@ -399,26 +705,30 @@ export class LocalLlmService {
   }
 
   // Simple chat wrapper
-  async chat(history: ChatMessage[], newMessage: string, language: string = 'English'): Promise<string> {
-    // Check if model supports reasoning
-    const useReasoning = shouldUseReasoningPrompts(this.config.modelName);
+  async chat(history: ChatMessage[], newMessage: string, language: string = 'English', enhancement?: ContextEnhancement): Promise<string> {
+    const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
     
     const system = useReasoning ? 
-      `You are Wrytica Assistant, an intelligent writing partner with reasoning capabilities.
+      `You are Wrytica Assistant, a world-class financial analysis and document drafting expert. 
+      You are running Qwen 3.5 (9B) at a production level.
       
-      THOUGHTFUL RESPONSE PROCESS - Consider:
-      1. What is the user's underlying need or goal?
-      2. What context would be most helpful?
-      3. How can I provide maximum value and actionable assistance?
-      4. What follow-up questions might be beneficial?
+      PRODUCTION GUIDELINES:
+      1. Provide authoritative, precise, and professional responses.
+      2. If RAG context (references) is provided, you MUST use it to ground your answers.
+      3. Use markdown for structure (tables, bolded terms, lists).
+      4. Avoid fluff and preamble.
+      5. If the user asks for a memo or report, follow formal business standards.
       
-      Be insightful, provide specific guidance, and maintain a supportive tone. Reply in ${language}.` :
-      `You are a helpful assistant. Be concise. Reply in ${language}.`;
+      REASONING PROCESS:
+      Analyze the provided financial context, identify key risks/opportunities, and synthesize a coherent answer.
+      
+      Reply in ${language}.` :
+      `You are a professional writing assistant. Be precise, concise, and helpful. Reply in ${language}.`;
     
     if (this.config.provider === 'ollama') {
        const controller = new AbortController();
-       // Increased timeout to 120 seconds for chat (models can be slower with conversation context)
-       const timeoutId = setTimeout(() => controller.abort(), 120000);
+       // Increased timeout to 300 seconds for chat (models can be slower with conversation context)
+       const timeoutId = setTimeout(() => controller.abort(), 300000);
        try {
         const response = await fetch(`${this.config.baseUrl}/api/chat`, {
           method: 'POST',
@@ -430,7 +740,10 @@ export class LocalLlmService {
                ...history.map(m => ({ role: m.role, content: m.content })),
                { role: 'user', content: newMessage }
             ],
-            stream: false
+            stream: false,
+            options: {
+              num_predict: this.config.maxCompletionTokens // Added max_tokens for Ollama
+            }
           }),
           signal: controller.signal
         });
@@ -450,7 +763,7 @@ export class LocalLlmService {
     } else {
       // LM Studio - also increase timeout for chat
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000);
+      const timeoutId = setTimeout(() => controller.abort(), 300000);
       
       try {
         const msgs = [
@@ -466,7 +779,7 @@ export class LocalLlmService {
             model: this.config.modelName,
             messages: msgs,
             temperature: 0.3,
-            max_tokens: 2048,
+            max_tokens: this.config.maxCompletionTokens, // Replaced hardcoded value
             stream: false
           }),
           signal: controller.signal
@@ -486,6 +799,166 @@ export class LocalLlmService {
         await this.handleFetchError(error);
         return "";
       }
+    }
+  }
+
+  // Streaming Chat implementation
+  async chatStream(history: ChatMessage[], newMessage: string, onToken: (token: string) => void, language: string = 'English', enhancement?: ContextEnhancement): Promise<string> {
+    const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
+    
+    const system = useReasoning ? 
+      `You are Wrytica Assistant, a world-class financial analysis and document drafting expert. 
+      You are running Qwen 3.5 (9B) at a production level. 
+      Analyze the provided financial context and synthesize a coherent answer. Reply in ${language}.` :
+      `You are a professional writing assistant. Be precise, concise, and helpful. Reply in ${language}.`;
+    
+    const messages = [
+      { role: 'system', content: system },
+      ...history.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content })),
+      { role: 'user', content: newMessage }
+    ];
+
+    if (this.config.provider === 'ollama') {
+      return this.streamOllama(messages, onToken);
+    } else {
+      return this.streamOpenAICompat(messages, onToken);
+    }
+  }
+
+  private async streamOllama(messages: any[], onToken: (token: string) => void): Promise<string> {
+    const response = await fetch(`${this.config.baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.config.modelName,
+        messages,
+        stream: true,
+        options: { 
+          num_ctx: this.config.contextLimit,
+          num_predict: this.config.maxCompletionTokens // Added max_tokens for Ollama
+        }
+      })
+    });
+
+    if (!response.ok) throw new Error(`Ollama Stream error: ${response.status}`);
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Response body is null');
+
+    let fullText = '';
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split('\n').filter(l => l.trim());
+      
+      for (const line of lines) {
+        try {
+          const data = JSON.parse(line);
+          if (data.message?.content) {
+            const token = data.message.content;
+            fullText += token;
+            onToken(token);
+          }
+          if (data.done) break;
+        } catch (e) {
+          console.warn('Failed to parse Ollama chunk', e);
+        }
+      }
+    }
+    return fullText;
+  }
+
+  private async streamOpenAICompat(messages: any[], onToken: (token: string) => void): Promise<string> {
+    const response = await fetch(`${this.config.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.config.modelName,
+        messages,
+        stream: true,
+        temperature: 0.3,
+        max_tokens: this.config.maxCompletionTokens // Replaced hardcoded value
+      })
+    });
+
+    if (!response.ok) throw new Error(`Local Server Stream error: ${response.status}`);
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Response body is null');
+
+    let fullText = '';
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split('\n');
+      
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const dataStr = line.replace('data: ', '').trim();
+        if (dataStr === '[DONE]') break;
+        
+        try {
+          const data = JSON.parse(dataStr);
+          const token = data.choices[0]?.delta?.content || '';
+          if (token) {
+            fullText += token;
+            onToken(token);
+          }
+        } catch (e) {
+          // Sometimes partial JSON chunks happen in SSE
+        }
+      }
+    }
+    return fullText;
+  }
+
+  async reasonOverPageIndex(query: string, nodes: PageIndexPromptNode[], language: string = 'English', enhancement?: ContextEnhancement, limit = 3): Promise<{ nodes: PageIndexSelection[]; thinking?: string }> {
+    if (!query.trim() || nodes.length === 0) return { nodes: [] };
+
+    const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
+    const systemPrompt = useReasoning
+      ? `You are a reasoning node scorer. Analyze the query and the candidate nodes carefully.
+1. Understand the user's need behind the query.
+2. Evaluate each node's content, summary, title, and context for relevance.
+3. Rank the nodes by how well they contain the answer, cite the page number, and explain why.
+4. Return JSON with a 'nodes' array where each entry includes nodeId, rank, and reason.
+Respond only in ${language}.`
+      : `You are a node scorer. Return JSON with a 'nodes' array containing nodeId, rank, and reason for the most relevant nodes. Respond in ${language}.`;
+
+    const candidateBlock = nodes.map((node, index) => {
+      const snippet = (node.summary || node.content || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+      return [
+        `Node ${index + 1}`,
+        `ID: ${node.nodeId}`,
+        `Document: ${node.docTitle}`,
+        `Page: ${node.pageNumber ?? 'n/a'}`,
+        `Title: ${node.title}`,
+        `Summary: ${node.summary || 'N/A'}`,
+        `Content Extract: ${snippet || 'No extract provided'}`
+      ].join('\n');
+    }).join('\n\n');
+
+    const prompt = `Query: ${query}\nLimit: ${limit} nodes\nCandidates:\n${candidateBlock}\nReturn JSON with 'nodes' array.`;
+
+    try {
+      const response = await this.generate(prompt, systemPrompt, true);
+      const payload = extractJson(response);
+      const entries = Array.isArray(payload.nodes) ? payload.nodes : [];
+      const resultNodes = entries.slice(0, limit).map((entry: any, index: number) => ({
+        nodeId: entry.nodeId,
+        reason: entry.reason || '',
+        rank: typeof entry.rank === 'number' ? entry.rank : index + 1
+      }));
+      return { nodes: resultNodes, thinking: typeof payload.thinking === 'string' ? payload.thinking : undefined };
+    } catch (error) {
+      console.error("Local PageIndex reasoning error:", error);
+      return { nodes: [] };
     }
   }
 }

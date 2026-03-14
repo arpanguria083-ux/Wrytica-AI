@@ -73,10 +73,28 @@ const REASONING_MODELS: Record<string, ModelCapabilities> = {
     supportsStructuredOutput: false,
     recommendedPromptStyle: 'reasoning'
   },
-  'microsoft/phi-4-mini-reasoning': {
+  'phi-4': {
     supportsReasoning: true,
     supportsChainOfThought: true,
     supportsStructuredOutput: false,
+    recommendedPromptStyle: 'enhanced'
+  },
+  'qwen2.5-coder-32b-instruct': {
+    supportsReasoning: true,
+    supportsChainOfThought: true,
+    supportsStructuredOutput: true,
+    recommendedPromptStyle: 'enhanced'
+  },
+  'qwen2.5-9b-instruct': {
+    supportsReasoning: true,
+    supportsChainOfThought: true,
+    supportsStructuredOutput: true,
+    recommendedPromptStyle: 'enhanced'
+  },
+  'qwen3.5-9b-instruct': {
+    supportsReasoning: true,
+    supportsChainOfThought: true,
+    supportsStructuredOutput: true,
     recommendedPromptStyle: 'enhanced'
   }
 };
@@ -92,10 +110,20 @@ export function detectModelCapabilities(modelName: string): ModelCapabilities {
   
   // Check partial matches for model families
   for (const [knownModel, capabilities] of Object.entries(REASONING_MODELS)) {
-    if (normalizedName.includes(knownModel.split('-')[0]) || 
-        knownModel.includes(normalizedName.split('-')[0]) ||
-        normalizedName.includes(knownModel.split('/')[1]?.split('-')[0] || '')) {
-      return capabilities;
+    const knownBase = knownModel.split('-')[0];
+    const normalizedParts = normalizedName.split(/[\/-]/);
+    
+    if (normalizedName.includes(knownBase) && knownBase.length > 3) {
+      // Make sure it's a substantive match like 'qwen' or 'llama'
+      // If the model is a variant of a known reasoning model family
+      if (knownModel.includes('reasoning') || knownModel.includes('thinking')) {
+          return capabilities;
+      }
+      
+      // Map base family capabilities if it closely matches
+      if (normalizedName.includes('qwen') && knownBase === 'qwen2.5') {
+         return capabilities;
+      }
     }
   }
   
@@ -113,6 +141,11 @@ export function shouldUseReasoningPrompts(modelName: string): boolean {
   return capabilities.supportsReasoning || capabilities.supportsChainOfThought;
 }
 
+export function shouldUseReasoningPromptsForContext(modelName: string, contextLimit: number): boolean {
+  if (contextLimit <= 8192) return false;
+  return shouldUseReasoningPrompts(modelName);
+}
+
 export function getOptimalPromptStyle(modelName: string): 'standard' | 'reasoning' | 'enhanced' {
   const capabilities = detectModelCapabilities(modelName);
   return capabilities.recommendedPromptStyle;
@@ -120,6 +153,26 @@ export function getOptimalPromptStyle(modelName: string): 'standard' | 'reasonin
 
 // Helper function to check if model supports thinking tags
 export function supportsThinkingTags(modelName: string): boolean {
-  const reasoningModels = ['o1-preview', 'o1-mini', 'gemini-2.0-flash-thinking', 'deepseek-r1'];
+  const reasoningModels = ['o1-preview', 'o1-mini', 'thinking', 'reasoning', 'deepseek-r1', 'phi-4', 'qwen2.5-32b', 'qwen3.5'];
   return reasoningModels.some(model => modelName.toLowerCase().includes(model));
+}
+
+// Helper function to check if a model has multimodal/vision capabilities
+export function isVisionCapable(modelName?: string): boolean {
+  if (!modelName) return false;
+  const normalized = modelName.toLowerCase().trim();
+  
+  // Known vision models / patterns
+  if (normalized.includes('vision') || 
+      normalized.includes('vl') || // qwen-vl
+      normalized.includes('llava') || 
+      normalized.includes('moondream') || 
+      normalized.includes('pixtral') ||
+      normalized.includes('minicpm-v') ||
+      normalized.includes('gpt-4o') || // standard gpt-4o has vision
+      (normalized.includes('gemini') && !normalized.includes('gemini-1.0-pro'))) { // most gemini 1.5/2.0 have vision
+    return true;
+  }
+  
+  return false;
 }

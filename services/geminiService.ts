@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Schema, Chat } from "@google/genai";
-import { ParaphraseMode, GrammarError, SummaryLength, SummaryFormat, ParaphraseResponse, CitationStyle, CitationResponse, GrammarCheckResult } from '../utils';
+import { ParaphraseMode, GrammarError, SummaryLength, SummaryFormat, ParaphraseResponse, CitationStyle, CitationResponse, GrammarCheckResult, ContextEnhancement, buildGuardrailInstructions, buildKnowledgeContext, PageIndexPromptNode, PageIndexSelection, LLMConfig, ChatMessage } from '../utils';
 import { detectModelCapabilities, shouldUseReasoningPrompts } from '../utils/modelCapabilities';
 
 // Note: API key will be provided dynamically by the user through the UI
@@ -8,9 +8,101 @@ import { detectModelCapabilities, shouldUseReasoningPrompts } from '../utils/mod
 const MODEL_FAST = 'gemini-2.5-flash';
 const MODEL_REASONING = 'gemini-2.5-flash'; // Using flash for speed in interactive tools
 
+const composeInstruction = (base: string, enhancement?: ContextEnhancement, toolName?: string) => {
+  if (!enhancement) return base;
+  const guardrailText = buildGuardrailInstructions(enhancement.guardrail, toolName);
+  const knowledgeContext = buildKnowledgeContext(enhancement.knowledgeRefs);
+  const extras = [guardrailText, enhancement.additionalInstructions, knowledgeContext].filter(Boolean).join('\n\n');
+  return extras ? `${base}\n\n${extras}` : base;
+};
+
 export const GeminiService = {
   
-  getEnhancedParaphrasePrompt(mode: ParaphraseMode, synonymsLevel: number, language: string): string {
+  /**
+   * Paraphrase with custom temperature (for middleware multiple candidates)
+   */
+  async paraphraseWithTemperature(
+    config: LLMConfig,
+    text: string,
+    mode: ParaphraseMode,
+    synonymsLevel: number,
+    language: string,
+    enhancement?: ContextEnhancement,
+    options?: { phraseFlip?: boolean; sentenceRestructure?: boolean; fluency?: boolean; sentenceCompression?: boolean; wordLevel?: boolean },
+    temperature: number = 0.5
+  ): Promise<ParaphraseResponse> {
+    const apiKey = config.apiKey!;
+    const model = config.modelName || MODEL_FAST;
+    if (!text.trim()) return { paraphrasedText: "", tone: "Neutral", confidence: 0 };
+
+    const optionInstructions = this.getOptionInstructions(options);
+    const useReasoning = shouldUseReasoningPrompts(model);
+    const systemInstruction = useReasoning 
+      ? this.getEnhancedParaphrasePrompt(mode, synonymsLevel, language, optionInstructions)
+      : this.getStandardParaphrasePrompt(mode, language, optionInstructions);
+    const finalInstruction = composeInstruction(systemInstruction, enhancement, 'Paraphraser');
+
+    const schema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        paraphrasedText: { type: Type.STRING },
+        tone: { type: Type.STRING },
+        confidence: { type: Type.NUMBER },
+      },
+      required: ['paraphrasedText', 'tone', 'confidence'],
+    };
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: text,
+          config: {
+            systemInstruction: finalInstruction,
+          temperature,
+          maxOutputTokens: config.maxCompletionTokens || 2048,
+          responseMimeType: 'application/json',
+          responseSchema: schema,
+        }
+      });
+      
+      const result = JSON.parse(response.text || "{}");
+      return {
+        paraphrasedText: result.paraphrasedText || "",
+        tone: result.tone || "Neutral",
+        confidence: result.confidence || 0
+      };
+    } catch (error: any) {
+      console.error("Paraphrase with temperature error:", error);
+      throw new Error(error.message || "Failed to paraphrase text.");
+    }
+  },
+
+  getOptionInstructions(options?: { phraseFlip?: boolean; sentenceRestructure?: boolean; fluency?: boolean; sentenceCompression?: boolean; wordLevel?: boolean }): string {
+    if (!options) return '';
+    const instructions: string[] = [];
+    
+    if (options.phraseFlip) {
+      instructions.push('- Phrase Flip: Identify and flip parallel structures like "not only X but also Y" to "Y as well as X" or similar patterns.');
+    }
+    if (options.sentenceRestructure) {
+      instructions.push('- Sentence Restructure: Change word order and sentence structure while preserving the original meaning.');
+    }
+    if (options.fluency) {
+      instructions.push('- Fluency: Improve grammatical accuracy and natural flow of the text.');
+    }
+    if (options.sentenceCompression) {
+      instructions.push('- Sentence Compression: Remove redundant words and condense sentences without losing meaning.');
+    }
+    if (options.wordLevel) {
+      instructions.push('- Word Level: Focus on word-level substitutions, replacing words with appropriate synonyms while maintaining context.');
+    }
+    
+    return instructions.length > 0 ? `\n\nQUILLBOT ADDITIONAL OPTIONS:\n${instructions.join('\n')}` : '';
+  },
+
+  getEnhancedParaphrasePrompt(mode: ParaphraseMode, synonymsLevel: number, language: string, optionInstructions = ''): string {
     const creativityDesc = synonymsLevel <= 25 ? 'minimal changes, stay close to original' :
                           synonymsLevel <= 50 ? 'moderate word substitutions and restructuring' :
                           synonymsLevel <= 75 ? 'creative word choices and varied structures' :
@@ -45,14 +137,15 @@ CRITICAL CONSTRAINTS:
 - Apply creativity level: ${creativityDesc}
 
 FORMATTING REQUIREMENTS:
-1. Preserve special characters (*, -, •, >, numbered lists)
+1. Preserve special characters (*, -, |, >, numbered lists)
 2. Maintain structure (lists, line breaks, paragraphs)
 3. Respect punctuation patterns that indicate formatting
+${optionInstructions}
 
 After your reasoning, analyze the tone of your paraphrased text and provide a JSON object matching the schema.`;
   },
 
-  getStandardParaphrasePrompt(mode: ParaphraseMode, language: string): string {
+  getStandardParaphrasePrompt(mode: ParaphraseMode, language: string, optionInstructions = ''): string {
     return `You are an expert writing assistant specialized in paraphrasing.
     Your task is to rewrite the input text in the '${mode}' style.
     
@@ -69,9 +162,9 @@ After your reasoning, analyze the tone of your paraphrased text and provide a JS
     - Expand: Increase length by adding relevant details and depth without fluff.
     - Shorten: Concisely convey the meaning in fewer words.
     - Custom: Follow the user's implicit intent or default to Standard if unspecified.
-    
+    ${optionInstructions}
     CRITICAL FORMATTING CONSTRAINTS:
-    1. Special Characters: You MUST preserve special characters used for listing or pointing, such as bullet points (*, -, •), arrows (>), or numbered lists (1., a.). 
+    1. Special Characters: You MUST preserve special characters used for listing or pointing, such as bullet points (*, -, |), arrows (>), or numbered lists (1., a.). 
     2. Structure: If the input text is a list or uses specific line breaks, maintain that structure in the output. Do not flatten lists into a single paragraph.
     3. Punctuation: Respect specific comma structures if they denote a deliberate list format.
 
@@ -202,8 +295,11 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
   },
 
   getStandardCitationPrompt(style: CitationStyle, language: string): string {
+    const allStyles = ['APA 7', 'MLA 9', 'Chicago', 'Harvard', 'IEEE', 'Vancouver', 'Turabian', 'ACS', 'AMA', 'ASA'];
     return `You are an expert scientific and academic citation generator. 
     Your task is to parse the input source information (URL, DOI, Title, or unstructured text) and generate a citation in ${style} style.
+    
+    Available citation styles: ${allStyles.join(', ')}
     
     Constraint: Ensure any explanatory text or 'unknown' placeholders in the components are in ${language}, but keep the citation formatted exactly according to the ${style} standard (which usually defaults to English for international standards, but adapt if the style permits).
 
@@ -243,20 +339,33 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
    * Paraphrases text based on the selected mode and synonym intensity.
    * Returns an object containing the paraphrased text and tone analysis.
    */
-  async paraphrase(apiKey: string, text: string, mode: ParaphraseMode, synonymsLevel: number = 50, language: string = 'English'): Promise<ParaphraseResponse> {
+  async paraphrase(
+    config: LLMConfig,
+    text: string,
+    mode: ParaphraseMode,
+    synonymsLevel: number = 50,
+    language: string = 'English',
+    enhancement?: ContextEnhancement,
+    options?: { phraseFlip?: boolean; sentenceRestructure?: boolean; fluency?: boolean; sentenceCompression?: boolean; wordLevel?: boolean }
+  ): Promise<ParaphraseResponse> {
+    const apiKey = config.apiKey!;
+    const model = config.modelName || MODEL_FAST;
     if (!text.trim()) return { paraphrasedText: "", tone: "Neutral", confidence: 0 };
 
     // Map synonyms level (0-100) to temperature (0.0 - 1.0) somewhat loose correlation
     // Higher synonyms = more creativity/randomness
     const temperature = 0.3 + (synonymsLevel / 200); 
 
+    // Build QuillBot-style additional options instructions
+    const optionInstructions = this.getOptionInstructions(options);
+
     // Check if model supports reasoning
-    const modelName = MODEL_FAST;
-    const useReasoning = shouldUseReasoningPrompts(modelName);
+    const useReasoning = shouldUseReasoningPrompts(model);
 
     const systemInstruction = useReasoning ? 
-      this.getEnhancedParaphrasePrompt(mode, synonymsLevel, language) :
-      this.getStandardParaphrasePrompt(mode, language);
+      this.getEnhancedParaphrasePrompt(mode, synonymsLevel, language, optionInstructions) :
+      this.getStandardParaphrasePrompt(mode, language, optionInstructions);
+    const finalInstruction = composeInstruction(systemInstruction, enhancement, 'Paraphraser');
 
     const schema: Schema = {
       type: Type.OBJECT,
@@ -272,12 +381,12 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
       const ai = new GoogleGenAI({ apiKey });
       
       const response = await ai.models.generateContent({
-        model: MODEL_FAST,
+        model: model,
         contents: text,
-        config: {
-          systemInstruction,
+          config: {
+            systemInstruction: finalInstruction,
           temperature,
-          maxOutputTokens: 2048,
+          maxOutputTokens: config.maxCompletionTokens || 2048,
           responseMimeType: 'application/json',
           responseSchema: schema,
         }
@@ -299,16 +408,18 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
   /**
    * Checks grammar, suggests fixes, and forecasts future patterns based on history.
    */
-  async checkGrammar(apiKey: string, text: string, patternsHistory: string = '', language: string = 'English'): Promise<GrammarCheckResult> {
+  async checkGrammar(config: LLMConfig, text: string, patternsHistory: string = '', language: string = 'English', enhancement?: ContextEnhancement): Promise<GrammarCheckResult> {
+    const apiKey = config.apiKey!;
+    const model = config.modelName || MODEL_FAST;
     if (!text.trim()) return { errors: [], forecast: [] };
 
     // Check if model supports reasoning
-    const modelName = MODEL_FAST;
-    const useReasoning = shouldUseReasoningPrompts(modelName);
+    const useReasoning = shouldUseReasoningPrompts(model);
 
     const systemInstruction = useReasoning ? 
       this.getEnhancedGrammarPrompt(language) :
       this.getStandardGrammarPrompt(language);
+    const finalInstruction = composeInstruction(systemInstruction, enhancement, 'Grammar');
 
     const schema: Schema = {
       type: Type.OBJECT,
@@ -338,23 +449,25 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
     try {
       const ai = new GoogleGenAI({ apiKey });
       
+
       const response = await ai.models.generateContent({
-        model: MODEL_FAST,
+        model: model,
         contents: `Current Text: "${text}"\n\nPatterns History: "${patternsHistory}"`,
-        config: {
-          systemInstruction,
+          config: {
+            systemInstruction: finalInstruction,
           responseMimeType: 'application/json',
           responseSchema: schema,
-          temperature: 0.1, 
+          temperature: 0.1,
+          maxOutputTokens: config.maxCompletionTokens || 2048,
         }
       });
 
       const result = JSON.parse(response.text || '{"errors": [], "forecast": []}');
-      
+
       // Add client-side IDs to errors
-      const errorsWithIds = (result.errors || []).map((item: any) => ({ 
-        ...item, 
-        id: Math.random().toString(36).substr(2, 9) 
+      const errorsWithIds = (result.errors || []).map((item: any) => ({
+        ...item,
+        id: Math.random().toString(36).substr(2, 9)
       }));
 
       return {
@@ -370,26 +483,29 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
   /**
    * Summarizes text.
    */
-  async summarize(apiKey: string, text: string, length: SummaryLength, format: SummaryFormat, language: string = 'English'): Promise<string> {
+  async summarize(config: LLMConfig, text: string, length: SummaryLength, format: SummaryFormat, language: string = 'English', enhancement?: ContextEnhancement): Promise<string> {
+    const apiKey = config.apiKey!;
+    const model = config.modelName || MODEL_FAST;
     if (!text.trim()) return "";
 
     // Check if model supports reasoning
-    const modelName = MODEL_FAST;
-    const useReasoning = shouldUseReasoningPrompts(modelName);
+    const useReasoning = shouldUseReasoningPrompts(model);
 
-    const systemInstruction = useReasoning ? 
+    const systemInstruction = useReasoning ?
       this.getEnhancedSummarizationPrompt(length, format, language) :
       this.getStandardSummarizationPrompt(length, format, language);
+    const finalInstruction = composeInstruction(systemInstruction, enhancement, 'Summarizer');
 
     try {
       const ai = new GoogleGenAI({ apiKey });
-      
+
       const response = await ai.models.generateContent({
-        model: MODEL_FAST,
+        model: model,
         contents: text,
-        config: {
-          systemInstruction,
+          config: {
+            systemInstruction: finalInstruction,
           temperature: 0.3,
+          maxOutputTokens: config.maxCompletionTokens || 2048,
         }
       });
       return response.text || "";
@@ -402,16 +518,18 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
   /**
    * Generates a scientific citation.
    */
-  async generateCitation(apiKey: string, sourceInfo: string, style: CitationStyle, language: string = 'English'): Promise<CitationResponse> {
+  async generateCitation(config: LLMConfig, sourceInfo: string, style: CitationStyle, language: string = 'English', enhancement?: ContextEnhancement): Promise<CitationResponse> {
+    const apiKey = config.apiKey!;
+    const model = config.modelName || MODEL_FAST;
     if (!sourceInfo.trim()) return { formatted_citation: "", bibtex: "", components: { author: "", date: "", title: "", source: "", doi_or_url: "" } };
 
     // Check if model supports reasoning
-    const modelName = MODEL_FAST;
-    const useReasoning = shouldUseReasoningPrompts(modelName);
+    const useReasoning = shouldUseReasoningPrompts(model);
 
-    const systemInstruction = useReasoning ? 
+    const systemInstruction = useReasoning ?
       this.getEnhancedCitationPrompt(style, language) :
       this.getStandardCitationPrompt(style, language);
+    const finalInstruction = composeInstruction(systemInstruction, enhancement, 'Citation');
 
     const schema: Schema = {
       type: Type.OBJECT,
@@ -434,18 +552,19 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
 
     try {
       const ai = new GoogleGenAI({ apiKey });
-      
+
       const response = await ai.models.generateContent({
-        model: MODEL_FAST,
+        model: model,
         contents: sourceInfo,
-        config: {
-          systemInstruction,
+          config: {
+            systemInstruction: finalInstruction,
           responseMimeType: 'application/json',
           responseSchema: schema,
           temperature: 0.1, // High precision
+          maxOutputTokens: config.maxCompletionTokens || 2048,
         }
       });
-      
+
       const result = JSON.parse(response.text || "{}");
       return {
         formatted_citation: result.formatted_citation || "",
@@ -459,25 +578,93 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
   },
 
   /**
-   * Initializes a chat session.
+   * Initializes a chat session with optional history.
    */
-  createChatSession(apiKey: string, language: string = 'English'): Chat {
+  createChatSession(config: LLMConfig, language: string = 'English', enhancement?: ContextEnhancement, history: ChatMessage[] = []): Chat {
+    const apiKey = config.apiKey!;
+    const model = config.modelName || MODEL_REASONING;
     const ai = new GoogleGenAI({ apiKey });
-    
-    // Check if model supports reasoning
-    const modelName = MODEL_REASONING;
-    const useReasoning = shouldUseReasoningPrompts(modelName);
 
-    const systemInstruction = useReasoning ? 
+    // Check if model supports reasoning
+    const useReasoning = shouldUseReasoningPrompts(model);
+    const systemInstruction = useReasoning ?
       this.getEnhancedChatPrompt(language) :
       this.getStandardChatPrompt(language);
-    
+    const finalInstruction = composeInstruction(systemInstruction, enhancement, 'Chat');
+
+    // Format history for Gemini SDK
+    // Gemini expects 'user' and 'model' roles. 
+    // We filter for these and map content to parts.
+    const formattedHistory = history.map(msg => ({
+      role: msg.role === 'model' || msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.content }]
+    }));
+
     return ai.chats.create({
-      model: MODEL_REASONING,
+      model: model,
+      history: formattedHistory,
       config: {
-        systemInstruction,
+        systemInstruction: finalInstruction,
+        maxOutputTokens: config.maxCompletionTokens || 2048,
       }
     });
+  },
+
+  async reasonOverPageIndex(config: LLMConfig, query: string, nodes: PageIndexPromptNode[], language: string = 'English', enhancement?: ContextEnhancement, limit = 3): Promise<{ nodes: PageIndexSelection[]; thinking?: string }> {
+    const apiKey = config.apiKey!;
+    const model = config.modelName || MODEL_REASONING;
+    if (!query.trim() || nodes.length === 0) return { nodes: [] };
+
+    const ai = new GoogleGenAI({ apiKey });
+    const systemInstruction = composeInstruction(getPageIndexReasoningPrompt(language), enhancement, 'PageIndex');
+    const candidateBlock = buildPageIndexCandidateBlock(nodes);
+    const prompt = `Query: ${query}\nLimit: ${limit} nodes\nCandidates:\n${candidateBlock}\nReturn JSON with 'nodes' array referencing nodeId, rank, and reason why it is relevant. Keep the JSON compact.`;
+
+    const schema: Schema = {
+      type: Type.OBJECT,
+      properties: {
+        thinking: { type: Type.STRING },
+        nodes: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              nodeId: { type: Type.STRING },
+              reason: { type: Type.STRING },
+              rank: { type: Type.NUMBER }
+            },
+            required: ['nodeId', 'reason']
+          }
+        }
+      },
+      required: ['nodes']
+    };
+
+    try {
+      const response = await ai.models.generateContent({
+        model: MODEL_REASONING,
+        contents: prompt,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: schema,
+          maxOutputTokens: 1024,
+          temperature: 0.2
+        }
+      });
+
+      const payload = JSON.parse(response.text || '{}');
+      const entries = Array.isArray(payload.nodes) ? payload.nodes : [];
+      const nodes = entries.slice(0, limit).map((entry: any, index: number) => ({
+        nodeId: entry.nodeId,
+        reason: entry.reason || '',
+        rank: typeof entry.rank === 'number' ? entry.rank : index + 1
+      }));
+      return { nodes, thinking: typeof payload.thinking === 'string' ? payload.thinking : undefined };
+    } catch (error) {
+      console.error("PageIndex reasoning error:", error);
+      return { nodes: [] };
+    }
   },
 
   getEnhancedChatPrompt(language: string): string {
@@ -509,7 +696,66 @@ RESPONSE PRINCIPLES:
 COMMUNICATION: Respond exclusively in ${language} throughout our conversation.`;
   },
 
+  async extractImageText(apiKey: string, base64: string, mimeType: string, language: string = 'English'): Promise<string> {
+    const ai = new GoogleGenAI({ apiKey });
+    const prompt = getVisionPrompt(language);
+    const contents = [
+      {
+        inlineData: {
+          mimeType: mimeType || 'image/png',
+          data: base64
+        }
+      },
+      {
+        text: prompt
+      }
+    ];
+
+    const response = await ai.models.generateContent({
+      model: MODEL_REASONING,
+      contents,
+      config: {
+        systemInstruction: prompt,
+        responseMimeType: 'text/plain',
+        temperature: 0.1,
+        maxOutputTokens: 4096
+      }
+    });
+
+    return response.text?.trim() || '';
+  },
+
   getStandardChatPrompt(language: string): string {
     return `You are Wrytica Assistant, a helpful, intelligent, and creative writing partner. Help the user with brainstorming, drafting, editing, and research. Be concise but helpful. You MUST converse in ${language}.`;
   }
 };
+
+const getVisionPrompt = (language: string) => {
+  return `You are an OCR expert. Analyze the supplied image and list every readable character sequence you can find. Return only the plain text, nothing else. Respond in ${language}.`;
+};
+
+const buildPageIndexCandidateBlock = (nodes: PageIndexPromptNode[]) => {
+  return nodes.map((node, index) => {
+    const snippet = (node.summary || node.content || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+    return [
+      `Node ${index + 1}`,
+      `ID: ${node.nodeId}`,
+      `Document: ${node.docTitle}`,
+      `Page: ${node.pageNumber ?? 'n/a'}`,
+      `Title: ${node.title}`,
+      `Summary: ${node.summary || 'N/A'}`,
+      `Content Extract: ${snippet || 'No extract provided'}`
+    ].join('\n');
+  }).join('\n\n');
+};
+
+const getPageIndexReasoningPrompt = (language: string) => {
+  return `You are Wrytica Reasoner. Analyze the query and the candidate nodes carefully.
+1. Understand the user's need behind the query.
+2. Evaluate each node's content, summary, title, and context for relevance.
+3. Rank the nodes by how well they contain the answer, cite the page number, and explain why.
+4. Return JSON with a 'nodes' array where each entry includes nodeId, rank, and reason.
+Respond only in ${language}.`;
+};
+
+

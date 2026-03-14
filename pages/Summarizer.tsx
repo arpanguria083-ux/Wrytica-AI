@@ -1,35 +1,102 @@
 import React, { useState, useEffect } from 'react';
-import { AlignLeft, List, FileText, ArrowRight } from 'lucide-react';
+import ReactQuill from 'react-quill-new';
+import { AlignLeft, List, FileText, ArrowRight, ThumbsUp, ThumbsDown, Clipboard } from 'lucide-react';
 import { AIService } from '../services/aiService';
-import { SummaryLength, SummaryFormat } from '../utils';
+import { SummaryLength, SummaryFormat, generateId, buildContextEnhancement, plainTextToHtml, htmlToPlainText, copyToClipboard } from '../utils';
 import { useAppContext } from '../contexts/AppContext';
+import 'react-quill-new/dist/quill.snow.css';
+
+const QUILL_MODULES = {
+  toolbar: [
+    ['bold', 'italic', 'underline', 'strike'],
+    [{ header: [1, 2, false] }],
+    [{ list: 'ordered' }, { list: 'bullet' }],
+    ['blockquote', 'code-block'],
+    ['link'],
+    ['clean']
+  ],
+  clipboard: { matchVisual: false }
+};
+
+const QUILL_FORMATS = [
+  'header',
+  'bold',
+  'italic',
+  'underline',
+  'strike',
+  'blockquote',
+  'code-block',
+  'list',
+  'bullet',
+  'link'
+];
 
 export const Summarizer: React.FC = () => {
-  const { summarizerState, setSummarizerState, config, updateUsage, isOverLimit, language } = useAppContext();
-  const [loading, setLoading] = useState(false);
+  const { summarizerState, setSummarizerState, config, updateUsage, isOverLimit, language, guardrails, selectedGuardrailId, recordToolHistory, recordFeedback, getFeedbackHints, saveInputText, getSavedInput } = useAppContext();
+  const guardrail = guardrails.find(g => g.id === selectedGuardrailId) || undefined;
+  const [lastHistoryEntryId, setLastHistoryEntryId] = useState<string | null>(null);
 
+  // Initialize input from saved state
+  const [localText, setLocalText] = useState(() => {
+    if (summarizerState.text) return summarizerState.text;
+    return getSavedInput('summarizer');
+  });
   // Destructure for easier access
-  const { text, summary, length, format } = summarizerState;
+  const { summary, summaryHtml, length, format } = summarizerState;
 
-  useEffect(() => { updateUsage(text); }, [text, updateUsage]);
+  useEffect(() => { updateUsage(localText); }, [localText, updateUsage]);
 
-  const setText = (val: string) => setSummarizerState(prev => ({ ...prev, text: val }));
+  const setText = (val: string) => {
+    setLocalText(val);
+    saveInputText('summarizer', val);
+    setSummarizerState(prev => ({ ...prev, text: val }));
+  };
   const setLength = (val: SummaryLength) => setSummarizerState(prev => ({ ...prev, length: val }));
   const setFormat = (val: SummaryFormat) => setSummarizerState(prev => ({ ...prev, format: val }));
-  const setSummaryResult = (val: string) => setSummarizerState(prev => ({ ...prev, summary: val }));
+  const setSummaryResult = (val: string) => setSummarizerState(prev => ({ ...prev, summary: val, summaryHtml: plainTextToHtml(val) }));
 
   const handleSummarize = async () => {
-    if (!text.trim() || isOverLimit) return;
-    setLoading(true);
+    if (!localText.trim() || isOverLimit) return;
+    setSummarizerState(prev => ({ ...prev, isLoading: true }));
     try {
-      const result = await AIService.summarize(config, text, length, format, language);
-      setSummaryResult(result);
+      const feedbackHints = getFeedbackHints('summarizer');
+      const enhancement = buildContextEnhancement(guardrail, feedbackHints);
+      const result = await AIService.summarize(config, localText, length, format, language, enhancement);
+      const htmlOutput = plainTextToHtml(result);
+      setSummarizerState(prev => ({ 
+        ...prev, 
+        summary: result, 
+        summaryHtml: htmlOutput,
+        isLoading: false 
+      }));
+      const entryId = generateId();
+      recordToolHistory({
+        id: entryId,
+        tool: 'summarizer',
+        input: localText,
+        output: result,
+        timestamp: Date.now(),
+        guardrailId: guardrail?.id,
+        metadata: { length, format, html: htmlOutput }
+      });
+      setLastHistoryEntryId(entryId);
     } catch (err) {
       console.error(err);
-      setSummaryResult("Error generating summary. Ensure your local model is running or check API settings.");
+      setSummarizerState(prev => ({ ...prev, summary: "Error generating summary. Ensure your local model is running or check API settings.", summaryHtml: plainTextToHtml("Error generating summary. Ensure your local model is running or check API settings."), isLoading: false }));
     } finally {
-      setLoading(false);
+      setSummarizerState(prev => ({ ...prev, isLoading: false }));
     }
+  };
+
+  const handleFeedback = (rating: number) => {
+    if (!lastHistoryEntryId) return;
+    const note = rating > 0 ? 'Summary was helpful' : 'Summary needs refinement';
+    recordFeedback('summarizer', rating, note, lastHistoryEntryId);
+  };
+
+  const handleSummaryHtmlChange = (value: string) => {
+    const plain = htmlToPlainText(value);
+    setSummarizerState(prev => ({ ...prev, summaryHtml: value, summary: plain }));
   };
 
   return (
@@ -41,7 +108,7 @@ export const Summarizer: React.FC = () => {
 
       <div className="bg-white dark:bg-dark-surface p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-dark-border">
          <textarea
-            value={text}
+            value={localText}
             onChange={(e) => setText(e.target.value)}
             placeholder="Paste your text here to summarize..."
             className="w-full h-48 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none resize-none mb-6 transition-all"
@@ -85,26 +152,59 @@ export const Summarizer: React.FC = () => {
 
             <button
                onClick={handleSummarize}
-               disabled={loading || !text || isOverLimit}
+               disabled={summarizerState.isLoading || !localText || isOverLimit}
                className="w-full md:w-auto px-8 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl font-bold hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 shadow-lg shadow-slate-200 dark:shadow-none"
             >
-               {loading ? <span>Processing...</span> : <><span>Summarize</span> <ArrowRight size={18} /></>}
+               {summarizerState.isLoading ? <span>Processing...</span> : <><span>Summarize</span> <ArrowRight size={18} /></>}
             </button>
          </div>
       </div>
 
       {summary && (
-        <div className="bg-white dark:bg-dark-surface p-8 rounded-2xl shadow-lg border border-slate-200 dark:border-dark-border animate-in slide-in-from-bottom-4 duration-500">
-          <div className="flex items-center space-x-3 mb-6">
-             <div className="bg-primary-100 text-primary-600 p-2 rounded-lg"><FileText size={24} /></div>
-             <h3 className="text-xl font-bold">Summary</h3>
+        <div className="bg-white dark:bg-dark-surface p-8 rounded-2xl shadow-lg border border-slate-200 dark:border-dark-border animate-in slide-in-from-bottom-4 duration-500 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="bg-primary-100 text-primary-600 p-2 rounded-lg"><FileText size={24} /></div>
+              <div>
+                <h3 className="text-xl font-bold">Summary</h3>
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">{format} format</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-slate-500">
+              <button
+                onClick={() => copyToClipboard(summaryHtml || summary)}
+                className="flex items-center gap-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900"
+              >
+                <Clipboard size={12} />
+                Copy
+              </button>
+              <span>Rate this summary:</span>
+              <button
+                onClick={() => handleFeedback(1)}
+                className="flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900"
+              >
+                <ThumbsUp size={12} />
+                Helpful
+              </button>
+              <button
+                onClick={() => handleFeedback(-1)}
+                className="flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900"
+              >
+                <ThumbsDown size={12} />
+                Needs fix
+              </button>
+            </div>
           </div>
-          <div className="prose dark:prose-invert max-w-none text-slate-700 dark:text-slate-300 leading-relaxed">
-             {format === 'Bullet Points' ? (
-                <div className="markdown-body whitespace-pre-line">{summary}</div>
-             ) : (
-                <p>{summary}</p>
-             )}
+          <div className="border border-slate-200 dark:border-dark-border rounded-2xl overflow-hidden">
+            <ReactQuill
+              value={summaryHtml}
+              onChange={handleSummaryHtmlChange}
+              modules={QUILL_MODULES}
+              formats={QUILL_FORMATS}
+              placeholder="Summary will appear here with Word-style formatting..."
+              theme="snow"
+              className="min-h-[260px] bg-white dark:bg-dark-surface"
+            />
           </div>
         </div>
       )}

@@ -9,19 +9,28 @@
     "preview": "vite preview",
     "build:clean": "rmdir /s /q dist 2>nul || rm -rf dist && npm run build",
     "build:preview": "npm run build && npm run preview",
-    "install:build": "npm install && npm run build"
+    "install:build": "npm install && npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "react-router-dom": "^7.9.6",
-    "lucide-react": "^0.554.0",
-    "react-dom": "^19.2.0",
     "@google/genai": "^1.30.0",
-    "react": "^19.2.0"
+    "idb": "^8.0.3",
+    "lucide-react": "^0.554.0",
+    "pdfjs-dist": "^3.7.107",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "react-quill-new": "^3.8.3",
+    "react-router-dom": "^7.9.6",
+    "remark-gfm": "^4.0.1",
+    "tesseract.js": "^4.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest": "^2.0.0"
   }
 }

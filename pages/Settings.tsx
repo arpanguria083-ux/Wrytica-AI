@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../contexts/AppContext';
-import { DEFAULT_CONFIGS, LLMProvider, LLMConfig } from '../utils';
-import { Save, RotateCcw, Server, Shield, Globe, Activity, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { DEFAULT_CONFIGS, LLMProvider, LLMConfig, Guardrail, generateId } from '../utils';
+import { Save, RotateCcw, Server, Shield, Globe, Activity, Check, AlertCircle, Loader2, HardDrive } from 'lucide-react';
 import { AIService } from '../services/aiService';
+import { detectHardwareProfile, getRecommendations } from '../services/hardwareAdvisor';
+import { IngestionConfig, DEFAULT_INGESTION_CONFIG, saveIngestionConfig } from './KnowledgeBase';
 
 export const Settings: React.FC = () => {
-  const { config, updateConfig, resetConfig } = useAppContext();
+  const { config, updateConfig, resetConfig, guardrails, addGuardrail, deleteGuardrail, retrievalMode, setRetrievalMode, selfImproveEnabled, setSelfImproveEnabled, hasGPU } = useAppContext();
   
   const [testStatus, setTestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
@@ -33,6 +35,56 @@ export const Settings: React.FC = () => {
     localStorage.setItem('wrytica_provider_configs', JSON.stringify(newProviderConfigs));
   }, [config]);
 
+  const [guardrailName, setGuardrailName] = useState('');
+  const [guardrailDescription, setGuardrailDescription] = useState('');
+  const [guardrailTone, setGuardrailTone] = useState('Professional');
+  const [guardrailFormatting, setGuardrailFormatting] = useState('');
+  const [guardrailRequired, setGuardrailRequired] = useState('');
+  const [guardrailProhibited, setGuardrailProhibited] = useState('');
+  const [hardwareInfo, setHardwareInfo] = useState(() => detectHardwareProfile());
+  const [rec, setRec] = useState(getRecommendations(hardwareInfo.profile));
+
+  // Ingestion configuration
+  const [ingestionConfig, setIngestionConfig] = useState<IngestionConfig>(() => {
+    try {
+      const stored = localStorage.getItem('wrytica_ingestion_config');
+      if (stored) return { ...DEFAULT_INGESTION_CONFIG, ...JSON.parse(stored) };
+    } catch { /* use defaults */ }
+    return { ...DEFAULT_INGESTION_CONFIG };
+  });
+
+  const updateIngestionConfig = (updates: Partial<IngestionConfig>) => {
+    const updated = { ...ingestionConfig, ...updates };
+    setIngestionConfig(updated);
+    saveIngestionConfig(updated);
+  };
+
+  const parseList = (value: string) =>
+    value
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+
+  const handleAddGuardrail = () => {
+    if (!guardrailName.trim()) return;
+    const guardrail: Guardrail = {
+      id: generateId(),
+      name: guardrailName.trim(),
+      description: guardrailDescription.trim() || 'Custom company guardrail.',
+      tone: guardrailTone || 'Professional',
+      formattingNotes: guardrailFormatting.trim(),
+      requiredPhrases: parseList(guardrailRequired),
+      prohibitedPhrases: parseList(guardrailProhibited),
+    };
+    addGuardrail(guardrail);
+    setGuardrailName('');
+    setGuardrailDescription('');
+    setGuardrailTone('Professional');
+    setGuardrailFormatting('');
+    setGuardrailRequired('');
+    setGuardrailProhibited('');
+  };
+
   const handleProviderChange = (provider: LLMProvider) => {
     // Load saved config for this provider, or use defaults
     const savedConfig = providerConfigs[provider] || DEFAULT_CONFIGS[provider];
@@ -55,6 +107,36 @@ export const Settings: React.FC = () => {
     }
   };
 
+  const handleAutoDetectLMStudio = async () => {
+    setTestStatus('loading');
+    setTestMessage('Querying LM Studio...');
+    try {
+      const resp = await fetch(`${config.baseUrl}/v1/models`);
+      if (!resp.ok) throw new Error('Failed to reach LM Studio');
+      const data = await resp.json();
+      if (data.data && data.data.length > 0) {
+        const model = data.data[0];
+        // Try to find context limit in various possible fields
+        const detectedContext = model.context_length || model.meta?.context_length || 4096;
+        const detectedMax = Math.floor(detectedContext * 0.9); // Suggest 90% as max completion
+        
+        updateConfig({ 
+          modelName: model.id,
+          contextLimit: detectedContext,
+          maxCompletionTokens: detectedMax
+        });
+        setTestStatus('success');
+        setTestMessage(`Detected: ${model.id} (${detectedContext} context)`);
+        setTimeout(() => setTestStatus('idle'), 5000);
+      } else {
+        throw new Error('No models found in LM Studio. Is a model loaded?');
+      }
+    } catch (err: any) {
+      setTestStatus('error');
+      setTestMessage(err.message || 'Detection failed');
+    }
+  };
+
   return (
     <div className="max-w-3xl mx-auto space-y-8">
       <div className="space-y-2">
@@ -63,7 +145,7 @@ export const Settings: React.FC = () => {
       </div>
       
       {/* Provider Selection Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
          {([
            { id: 'gemini', label: 'Online (Gemini)', icon: Globe, desc: 'Best quality, Multimodal' },
            { id: 'ollama', label: 'Offline (Ollama)', icon: Shield, desc: 'Private, Local Inference' },
@@ -85,8 +167,92 @@ export const Settings: React.FC = () => {
          ))}
       </div>
 
-      {/* Configuration Form */}
-      <div className="bg-white dark:bg-dark-surface rounded-2xl shadow-sm border border-slate-200 dark:border-dark-border p-8 space-y-6">
+      <div className="bg-white dark:bg-dark-surface rounded-2xl shadow-sm border border-slate-200 dark:border-dark-border p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Retrieval Mode</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Use PageIndex reasoning alone or layer a lightweight vector cache for faster lookups on large docs.</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={() => setRetrievalMode('pageindex')}
+            className={`px-4 py-2 rounded-lg border text-sm font-semibold ${retrievalMode === 'pageindex' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}
+          >
+            PageIndex (vectorless)
+          </button>
+          <button
+            onClick={() => setRetrievalMode('hybrid')}
+            className={`px-4 py-2 rounded-lg border text-sm font-semibold ${retrievalMode === 'hybrid' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}
+          >
+            Hybrid (PageIndex + vector cache)
+          </button>
+        </div>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Hybrid builds a hashed vector cache in-memory (no external DB) to accelerate retrieval. Works within laptop limits; falls back to PageIndex if empty.
+        </p>
+      </div>
+
+      <div className="bg-white dark:bg-dark-surface rounded-2xl shadow-sm border border-slate-200 dark:border-dark-border p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Self-improvement</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Rerank retrieved snippets using your feedback (thumbs/comments). No model fine-tuning.</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" checked={selfImproveEnabled} onChange={(e) => setSelfImproveEnabled(e.target.checked)} />
+            <span>Enable</span>
+          </label>
+        </div>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Runs on-device. If GPU is available ({hasGPU ? 'detected' : 'not detected'}), you can optionally pair with larger local models; otherwise stick to lite/quantized weights to stay under 16 GB RAM.
+        </p>
+      </div>
+
+      <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 text-xs text-slate-600 dark:text-slate-300">
+        <p className="font-semibold text-slate-800 dark:text-white text-sm mb-1">Hardware hint</p>
+        <p>
+          We auto-detect GPU in the browser. If you have GPU, consider larger or vision models; otherwise stay with lite/quantized models to keep RAM under 16 GB.
+        </p>
+      </div>
+
+      <div className="bg-white dark:bg-dark-surface rounded-2xl shadow-sm border border-slate-200 dark:border-dark-border p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Hardware Advisor</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Detect your device and suggest local model + context limits.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const info = detectHardwareProfile();
+                setHardwareInfo(info);
+                setRec(getRecommendations(info.profile));
+              }}
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700"
+            >
+              Detect
+            </button>
+            <button
+              onClick={() => {
+                updateConfig({ modelName: rec.textModel, contextLimit: rec.contextLimit });
+              }}
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary-600 text-white"
+            >
+              Apply suggestion
+            </button>
+          </div>
+        </div>
+        <div className="text-xs text-slate-600 dark:text-slate-300 space-y-1">
+          <p>Profile: {hardwareInfo.profile} | GPU: {hardwareInfo.hasGPU ? 'Detected' : 'Not detected'} | RAM (approx): {hardwareInfo.deviceMemoryGB ? `${hardwareInfo.deviceMemoryGB} GB` : 'n/a'} | Renderer: {hardwareInfo.gpuRenderer || 'n/a'}</p>
+          <p>Suggested text model: <span className="font-semibold">{rec.textModel}</span> · Context: {rec.contextLimit.toLocaleString()} tokens</p>
+          {rec.visionModel && <p>Suggested vision model: <span className="font-semibold">{rec.visionModel}</span> · Max images: {rec.maxVisionImages}</p>}
+          <p className="text-slate-500 dark:text-slate-400">{rec.notes}</p>
+        </div>
+      </div>
+
+        {/* Configuration Form */}
+        <div className="bg-white dark:bg-dark-surface rounded-2xl shadow-sm border border-slate-200 dark:border-dark-border p-8 space-y-6">
         <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
            <div className="flex items-center space-x-2">
               <div className={`w-2 h-2 rounded-full ${config.provider === 'gemini' ? 'bg-green-500' : 'bg-orange-500'}`}></div>
@@ -110,6 +276,17 @@ export const Settings: React.FC = () => {
               }
               <span>{testStatus === 'loading' ? 'Testing...' : 'Test Connection'}</span>
            </button>
+
+           {config.provider === 'lmstudio' && (
+             <button
+               onClick={handleAutoDetectLMStudio}
+               disabled={testStatus === 'loading'}
+               className="flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-violet-100 text-violet-700 hover:bg-violet-200 dark:bg-violet-900/30 dark:text-violet-300 transition-colors"
+             >
+               <Activity size={14} />
+               <span>Auto-Detect Model</span>
+             </button>
+           )}
         </div>
         
         {/* Status Message */}
@@ -177,25 +354,196 @@ export const Settings: React.FC = () => {
             </p>
           </div>
 
-          {/* Context Limit */}
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Context Window Limit (Tokens)</label>
-            <div className="flex items-center space-x-4">
+          {/* Context Limit & Max Completion */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Context Window Limit (Tokens)</label>
               <input 
                 type="number" 
                 value={config.contextLimit}
                 onChange={(e) => updateConfig({ contextLimit: parseInt(e.target.value) || 4096 })}
                 className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
               />
-              <div className="text-xs text-slate-500 w-48">
-                 Common Limits:<br/>
-                 Llama 3 (8k): 8192<br/>
-                 Mistral (32k): 32768
-              </div>
+              <p className="text-[10px] text-slate-400">Total memory (Input + Output). Llama 3 (8k): 8192, Mistral (32k): 32768.</p>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Max Completion Tokens (Output)</label>
+              <input 
+                type="number" 
+                value={config.maxCompletionTokens}
+                onChange={(e) => updateConfig({ maxCompletionTokens: parseInt(e.target.value) || 2048 })}
+                className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
+              />
+              <p className="text-[10px] text-slate-400">Maximum length for a single response. Must be less than Context Window.</p>
             </div>
           </div>
-
         </div>
+
+        <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800 dark:text-white">Company Guardrails</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Add or adjust style/terminology rules that the AI must follow.</p>
+            </div>
+            <button
+              onClick={handleAddGuardrail}
+              className="px-4 py-2 bg-primary-600 text-white rounded-lg text-xs font-semibold uppercase tracking-wide disabled:opacity-50"
+              disabled={!guardrailName.trim()}
+            >
+              Add Guardrail
+            </button>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <input
+              value={guardrailName}
+              onChange={(e) => setGuardrailName(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-dark-surface text-sm"
+              placeholder="Guardrail name (e.g., Legal Memo)"
+            />
+            <input
+              value={guardrailTone}
+              onChange={(e) => setGuardrailTone(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-dark-surface text-sm"
+              placeholder="Preferred tone (Professional, Formal, etc.)"
+            />
+          </div>
+          <textarea
+            value={guardrailDescription}
+            onChange={(e) => setGuardrailDescription(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-dark-surface text-sm resize-none"
+            rows={2}
+            placeholder="Describe the guardrail (audience, voice, do's/don'ts)..."
+          />
+          <textarea
+            value={guardrailFormatting}
+            onChange={(e) => setGuardrailFormatting(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-dark-surface text-sm resize-none"
+            rows={2}
+            placeholder="Formatting notes (e.g., use bullets, no emoji, cite sources)..."
+          />
+          <div className="grid gap-3 md:grid-cols-2 text-xs text-slate-500 dark:text-slate-400">
+            <input
+              value={guardrailRequired}
+              onChange={(e) => setGuardrailRequired(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-dark-surface text-sm"
+              placeholder="Required terms/phrases (comma-separated)"
+            />
+            <input
+              value={guardrailProhibited}
+              onChange={(e) => setGuardrailProhibited(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-dark-surface text-sm"
+              placeholder="Prohibited terms/phrases (comma-separated)"
+            />
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-3">
+            {guardrails.map((guardrail) => (
+              <div key={guardrail.id} className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-dark-surface shadow-sm space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-slate-800 dark:text-white">{guardrail.name}</h4>
+                  <button
+                    onClick={() => deleteGuardrail(guardrail.id)}
+                    className="text-xs text-red-500 hover:text-red-700"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-3">{guardrail.description}</p>
+                <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
+                  {guardrail.requiredPhrases?.map(phrase => (
+                    <span key={phrase} className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">{phrase}</span>
+                  ))}
+                </div>
+                <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
+                  {guardrail.prohibitedPhrases?.map(phrase => (
+                    <span key={phrase} className="px-2 py-0.5 rounded-full bg-red-50 text-red-600 dark:bg-red-900/50">{phrase}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+      {/* Ingestion Configuration */}
+      <div className="bg-white dark:bg-dark-surface rounded-2xl shadow-sm border border-slate-200 dark:border-dark-border p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+              <HardDrive size={20} className="text-emerald-500" />
+              Ingestion Configuration
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Control how bulk folder indexing handles files, memory, and PDF processing.</p>
+          </div>
+          <button
+            onClick={() => {
+              setIngestionConfig({ ...DEFAULT_INGESTION_CONFIG });
+              saveIngestionConfig({ ...DEFAULT_INGESTION_CONFIG });
+            }}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            Reset Defaults
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Max File Size (MB)</label>
+            <input
+              type="number"
+              value={ingestionConfig.maxFileSizeMB}
+              onChange={(e) => updateIngestionConfig({ maxFileSizeMB: Math.max(1, parseInt(e.target.value) || 20) })}
+              className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
+            />
+            <p className="text-[10px] text-slate-400">Files larger than this are skipped. Default: 20 MB.</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Max PDF Pages</label>
+            <input
+              type="number"
+              value={ingestionConfig.maxPdfPages}
+              onChange={(e) => updateIngestionConfig({ maxPdfPages: Math.max(1, parseInt(e.target.value) || 50) })}
+              className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
+            />
+            <p className="text-[10px] text-slate-400">Max pages to extract per PDF. Default: 50.</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Batch Size</label>
+            <input
+              type="number"
+              value={ingestionConfig.batchSize}
+              onChange={(e) => updateIngestionConfig({ batchSize: Math.max(5, parseInt(e.target.value) || 20) })}
+              className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
+            />
+            <p className="text-[10px] text-slate-400">Files per batch before flushing to storage. Default: 20.</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Memory Threshold (MB)</label>
+            <input
+              type="number"
+              value={ingestionConfig.memoryThresholdMB}
+              onChange={(e) => updateIngestionConfig({ memoryThresholdMB: Math.max(100, parseInt(e.target.value) || 400) })}
+              className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
+            />
+            <p className="text-[10px] text-slate-400">Stop indexing when processed data exceeds this. Default: 400 MB.</p>
+          </div>
+
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Max Stored Content Length (chars)</label>
+            <input
+              type="number"
+              value={ingestionConfig.maxStoredContentLength}
+              onChange={(e) => updateIngestionConfig({ maxStoredContentLength: Math.max(5000, parseInt(e.target.value) || 50000) })}
+              className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
+            />
+            <p className="text-[10px] text-slate-400">Document content is truncated beyond this length to save memory. Chunks are still created from the full text. Default: 50,000 chars.</p>
+          </div>
+        </div>
+      </div>
 
         <div className="pt-6 border-t border-slate-100 dark:border-slate-800 flex justify-end space-x-4">
            <button 
