@@ -1,4 +1,4 @@
-import { LucideIcon } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 // --- Types ---
 
@@ -209,23 +209,74 @@ export const rankCandidates = (
 };
 
 // Mathematical mode curves for synonyms transformation (moved from Paraphraser.tsx)
-// Each mode transforms the slider value (0-100) into effective creativity level
+// Each mode transforms the slider value (0-100) into effective creativity level with boundary validation
 const modeCurvesInternal: Record<ParaphraseMode, (slider: number) => number> = {
-  'Standard': (s) => s,
-  'Fluency': (s) => Math.floor(20 + (s / 100) * 60 + Math.pow(s / 100, 2) * 20),
-  'Humanize': (s) => Math.floor(10 + 80 / (1 + Math.exp(-0.08 * (s - 50)))),
-  'Formal': (s) => Math.floor(5 + Math.pow(s / 100, 0.5) * 35),
-  'Academic': (s) => Math.floor(15 + (s / 100) * 45),
-  'Simple': (s) => s,
-  'Creative': (s) => Math.floor(10 + Math.pow(s / 100, 1.5) * 90),
-  'Expand': (s) => Math.floor(30 + Math.log10(1 + s * 9) * 25),
-  'Shorten': (s) => Math.floor(100 - Math.pow((100 - s) / 100, 0.7) * 70),
-  'Custom': (s) => s
+  'Standard': (s) => Math.max(0, Math.min(100, s)),
+  'Fluency': (s) => {
+    const normalized = Math.max(0, Math.min(100, s)) / 100;
+    return Math.max(0, Math.min(100, Math.floor(20 + normalized * 60 + Math.pow(normalized, 2) * 20)));
+  },
+  'Humanize': (s) => {
+    const normalized = Math.max(0, Math.min(100, s));
+    const sigmoidValue = 10 + 80 / (1 + Math.exp(-0.08 * (normalized - 50)));
+    return Math.max(0, Math.min(100, Math.floor(sigmoidValue)));
+  },
+  'Formal': (s) => {
+    const normalized = Math.max(0, Math.min(100, s)) / 100;
+    return Math.max(0, Math.min(100, Math.floor(5 + Math.sqrt(normalized) * 35)));
+  },
+  'Academic': (s) => {
+    const normalized = Math.max(0, Math.min(100, s)) / 100;
+    return Math.max(0, Math.min(100, Math.floor(15 + normalized * 45)));
+  },
+  'Simple': (s) => Math.max(0, Math.min(100, s)),
+  'Creative': (s) => {
+    const normalized = Math.max(0, Math.min(100, s)) / 100;
+    return Math.max(0, Math.min(100, Math.floor(10 + Math.pow(normalized, 1.2) * 80)));
+  },
+  'Expand': (s) => {
+    const normalized = Math.max(0, Math.min(100, s));
+    const logValue = Math.log10(1 + normalized * 0.09); // Scale to prevent extreme values
+    return Math.max(0, Math.min(100, Math.floor(30 + logValue * 25)));
+  },
+  'Shorten': (s) => {
+    const normalized = Math.max(0, Math.min(100, s));
+    const compression = 100 - Math.pow((100 - normalized) / 100, 0.7) * 70;
+    return Math.max(0, Math.min(100, Math.floor(compression)));
+  },
+  'Custom': (s) => Math.max(0, Math.min(100, s))
 };
 
-// Get mode-specific synonyms effective value
+// Get mode-specific synonyms effective value with comprehensive validation
 export const getEffectiveSynonyms = (sliderValue: number, mode: ParaphraseMode): number => {
-  return modeCurvesInternal[mode](sliderValue);
+  // Validate input parameters
+  if (typeof sliderValue !== 'number' || isNaN(sliderValue)) {
+    console.warn(`Invalid sliderValue provided to getEffectiveSynonyms: ${sliderValue}, defaulting to 50`);
+    sliderValue = 50;
+  }
+  
+  if (!modeCurvesInternal[mode]) {
+    console.warn(`Unknown mode provided to getEffectiveSynonyms: ${mode}, defaulting to 'Standard'`);
+    mode = 'Standard';
+  }
+  
+  // Ensure slider value is within valid range
+  const clampedValue = Math.max(0, Math.min(100, sliderValue));
+  
+  try {
+    const result = modeCurvesInternal[mode](clampedValue);
+    
+    // Final validation to ensure result is within expected bounds
+    if (typeof result !== 'number' || isNaN(result) || !isFinite(result)) {
+      console.warn(`Mathematical curve produced invalid result for mode ${mode}: ${result}, defaulting to clamped value`);
+      return clampedValue;
+    }
+    
+    return Math.max(0, Math.min(100, result));
+  } catch (error) {
+    console.error(`Error in mathematical curve for mode ${mode}:`, error);
+    return clampedValue; // Fallback to the clamped input value
+  }
 };
 
 export interface GrammarError {
@@ -346,6 +397,8 @@ export interface KnowledgeDocument {
   drivePath?: string;
   pageIndex?: PageIndexNode[];
   pageImages?: string[]; // base64 data URLs for vision RAG (small set)
+  previewUrl?: string; // Temporary Blob URL for visual PDF/Image viewer
+  type?: 'pdf' | 'image' | 'text' | 'docx' | 'other';
 }
 
 export interface PageIndexNode {
@@ -431,9 +484,6 @@ export interface CitationState {
   isLoading?: boolean;
 }
 
-export interface ChatState {
-  messages: ChatMessage[];
-}
 // --- LLM & Settings Types ---
 
 export type LLMProvider = 'gemini' | 'ollama' | 'lmstudio';
@@ -449,6 +499,7 @@ export interface ChatSession {
 export interface ChatState {
   sessions: ChatSession[];
   currentSessionId: string | null;
+  messages: ChatMessage[];
 }
 
 export interface LLMConfig {
@@ -463,7 +514,7 @@ export interface LLMConfig {
 export const DEFAULT_CONFIGS: Record<LLMProvider, LLMConfig> = {
   gemini: {
     provider: 'gemini',
-    modelName: 'gemini-2.5-flash',
+    modelName: 'gemini-2.0-flash',
     baseUrl: '',
     contextLimit: 1000000,
     maxCompletionTokens: 8192,
@@ -471,14 +522,14 @@ export const DEFAULT_CONFIGS: Record<LLMProvider, LLMConfig> = {
   },
   ollama: {
     provider: 'ollama',
-    modelName: 'llama3',
+    modelName: 'llama3.2:3b', // More specific version
     baseUrl: 'http://localhost:11434',
     contextLimit: 8192,
     maxCompletionTokens: 4096
   },
   lmstudio: {
     provider: 'lmstudio',
-    modelName: 'microsoft/phi-4-mini-reasoning', // Use actual model name from LM Studio
+    modelName: 'llama-3.2-3b-instruct', // More common model name
     baseUrl: 'http://localhost:1234',
     contextLimit: 4096,
     maxCompletionTokens: 2048
@@ -514,9 +565,31 @@ export const STOP_WORDS = new Set([
   'just', 'more', 'some', 'any', 'each', 'very', 'all', 'own', 'such',
 ]);
 
+// --- Ingestion Config ---
+export interface IngestionConfig {
+  maxFileSizeMB: number;
+  maxPdfPages: number;
+  batchSize: number;
+  memoryThresholdMB: number;
+  maxStoredContentLength: number;
+  pdfExtractionMode: 'standard' | 'deep';
+}
+
+export const DEFAULT_INGESTION_CONFIG: IngestionConfig = {
+  maxFileSizeMB: 20,
+  maxPdfPages: 50,
+  batchSize: 10,
+  memoryThresholdMB: 400,
+  maxStoredContentLength: 50000,
+  pdfExtractionMode: 'standard',
+};
+
+export const PDF_EXTRACTION_MODE_STORAGE_KEY = 'wrytica_pdf_extraction_mode';
+
 // --- Helpers ---
 
-export const generateId = () => Math.random().toString(36).substr(2, 9);
+export const generateId = (): string =>
+  `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 11)}`;
 
 export const copyToClipboard = (text: string) => {
   navigator.clipboard.writeText(text);
@@ -557,7 +630,9 @@ export const extractJson = (text: string): any => {
     /<think>[\s\S]*?(?={)/gi, // Unclosed think block before JSON
     /<\|reserved_\d+\|>[\s\S]*/gi,
     /Thought(?:s|ing)?\s*Process:?[\s\S]*?(?=\n\n|\n\s*\n|```|{)/gi,
+    /^Thinking\s+Process:?[\s\S]*?(?=\n\n|\n\s*\n|```|{)/gim,
     /^Thought(?:s|ing)?\s*Process:?.*$/gim,
+    /^(?:\d+\.\s+)?\*\*Analyze the (?:Request|Input Text|Input):\*\*[\s\S]*?(?=\n\n|\n\s*\n|```|{)/gim,
     /^(?:Let me|I'll|I will|Certainly)[\s\S]*?(?=\n\n|\n\s*\n|{)/gim
   ];
   
@@ -582,14 +657,35 @@ export const extractJson = (text: string): any => {
       } catch (e2) { /* continue */ }
     }
     
-    // 3. Try finding the first '{' and last '}'
-    const firstBrace = cleanText.indexOf('{');
-    const lastBrace = cleanText.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      try {
-        const extracted = cleanText.substring(firstBrace, lastBrace + 1);
-        return JSON.parse(extracted);
-      } catch (e3) { /* continue */ }
+    // 3. Try finding all possible '{' and '}' pairs
+    // This is more robust for cases where thinking process contains BibTeX or other braces
+    const openBraces = [];
+    for (let i = 0; i < cleanText.length; i++) {
+      if (cleanText[i] === '{') openBraces.push(i);
+    }
+    
+    const closeBraces = [];
+    for (let i = 0; i < cleanText.length; i++) {
+      if (cleanText[i] === '}') closeBraces.push(i);
+    }
+
+    // Try largest pairs first
+    for (let i = 0; i < openBraces.length; i++) {
+      for (let j = closeBraces.length - 1; j >= 0; j--) {
+        const start = openBraces[i];
+        const end = closeBraces[j];
+        if (end > start) {
+          const candidate = cleanText.substring(start, end + 1);
+          // Quick check: JSON objects must have a colon
+          if (!candidate.includes(':')) continue;
+          
+          try {
+            // Attempt to fix unescaped backslashes before parsing
+            let fixed = candidate.replace(/\\(?![bfnrtu"'\\])/g, '\\\\');
+            return JSON.parse(fixed);
+          } catch (e) { /* try next pair */ }
+        }
+      }
     }
     
     // 4. Try finding array brackets '[' and ']'
@@ -660,6 +756,17 @@ export const STORAGE_KEYS = {
 export const chunkText = (text: string, chunkSize = 800, overlap = 200, meta: Partial<KnowledgeChunk> = {}): KnowledgeChunk[] => {
   const clean = text.replace(/\s+/g, ' ').trim();
   if (!clean) return [];
+  if (clean.length <= chunkSize) {
+    return [{
+      id: generateId(),
+      docId: meta.docId || '',
+      text: clean,
+      order: 0,
+      sourceTitle: meta.sourceTitle || '',
+      sourcePath: meta.sourcePath,
+      tags: meta.tags || [],
+    }];
+  }
 
   const chunks: KnowledgeChunk[] = [];
   let start = 0;
@@ -670,7 +777,7 @@ export const chunkText = (text: string, chunkSize = 800, overlap = 200, meta: Pa
       const searchStart = Math.max(end - 100, start);
       const segment = clean.slice(searchStart, end);
       const lastSentence = segment.lastIndexOf('. ');
-      if (lastSentence > 0) {
+      if (lastSentence >= 0) {
         end = searchStart + lastSentence + 2;
       }
     }
@@ -687,7 +794,9 @@ export const chunkText = (text: string, chunkSize = 800, overlap = 200, meta: Pa
       });
       order += 1;
     }
-    start = end - overlap;
+    if (end >= clean.length) break;
+    const nextStart = end - overlap;
+    start = nextStart > start ? nextStart : end;
     if (start < 0) start = 0;
     if (start >= clean.length) break;
   }
@@ -700,6 +809,8 @@ export const rankChunksByQuery = (chunks: KnowledgeChunk[], query: string): Know
   const tokens = query.toLowerCase().split(/\W+/).filter(t => t && !STOP_WORDS.has(t));
   if (!tokens.length) return [];
   const scoreChunk = (chunk: KnowledgeChunk) => {
+    // Add null check for chunk and chunk.text to prevent TypeError
+    if (!chunk || !chunk.text) return 0;
     const content = (chunk.text + ' ' + (chunk.sourceTitle || '') + ' ' + (chunk.tags || []).join(' ')).toLowerCase();
     return tokens.reduce((acc, token) => {
       const occurrences = (content.match(new RegExp(`\\b${token}\\b`, 'g')) || []).length;
@@ -751,8 +862,68 @@ export const rankPageIndexNodesByQuery = (nodes: PageIndexNode[], query: string)
 
 export const plainTextToHtml = (text: string): string => {
   if (!text) return '';
-  const paragraphs = text.trim().split(/\n\s*\n/).filter(Boolean);
-  return paragraphs.map(paragraph => `<p>${paragraph.trim().replace(/\n/g, '<br/>')}</p>`).join('');
+  
+  // 1. Basic Markdown-like formatting
+  let html = text.trim();
+  
+  // Bold: **text** or __text__
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+  
+  // Italic: *text* or _text_
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  // Avoid matching underscores in words (heuristic: must have space or start/end)
+  html = html.replace(/(^|\s)_(.*?)_($|\s)/g, '$1<em>$2</em>$3');
+
+  // 2. Handle Lists
+  const lines = html.split('\n');
+  let inUl = false;
+  let inOl = false;
+  const processedLines: string[] = [];
+
+  lines.forEach(line => {
+    const trimmedLine = line.trim();
+    
+    // Unordered List: * or -
+    const ulMatch = trimmedLine.match(/^[*|-]\s+(.*)/);
+    if (ulMatch) {
+      if (inOl) { processedLines.push('</ol>'); inOl = false; }
+      if (!inUl) { processedLines.push('<ul>'); inUl = true; }
+      processedLines.push(`<li>${ulMatch[1]}</li>`);
+      return;
+    }
+
+    // Ordered List: 1. or 1)
+    const olMatch = trimmedLine.match(/^\d+[.)]\s+(.*)/);
+    if (olMatch) {
+      if (inUl) { processedLines.push('</ul>'); inUl = false; }
+      if (!inOl) { processedLines.push('<ol>'); inOl = true; }
+      processedLines.push(`<li>${olMatch[1]}</li>`);
+      return;
+    }
+
+    // Close lists if we hit a non-list line
+    if (inUl) { processedLines.push('</ul>'); inUl = false; }
+    if (inOl) { processedLines.push('</ol>'); inOl = false; }
+    
+    processedLines.push(line);
+  });
+
+  // Final close
+  if (inUl) processedLines.push('</ul>');
+  if (inOl) processedLines.push('</ol>');
+
+  // 3. Paragraphs
+  const finalContent = processedLines.join('\n');
+  const paragraphs = finalContent.split(/\n\s*\n/).filter(Boolean);
+  
+  return paragraphs.map(p => {
+    // If it's already a list, don't wrap in <p>
+    if (p.trim().startsWith('<ul>') || p.trim().startsWith('<ol>')) {
+      return p.trim();
+    }
+    return `<p>${p.trim().replace(/\n/g, '<br/>')}</p>`;
+  }).join('');
 };
 
 export const htmlToPlainText = (html: string): string => {

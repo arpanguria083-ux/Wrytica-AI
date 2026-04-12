@@ -109,6 +109,7 @@ export const ChatAssistant: React.FC = () => {
 
   const [showFeedbackInput, setShowFeedbackInput] = useState<boolean>(false);
   const [feedbackComment, setFeedbackComment] = useState<string>('');
+  const [feedbackAnimation, setFeedbackAnimation] = useState<'up' | 'down' | null>(null);
   const [uploadedDoc, setUploadedDoc] = useState<{ name: string; text: string; images: string[]; type: 'pdf' | 'image' } | null>(null);
   const [isProcessingDoc, setIsProcessingDoc] = useState<boolean>(false);
   const [showDocPreview, setShowDocPreview] = useState<boolean>(false);
@@ -211,6 +212,9 @@ export const ChatAssistant: React.FC = () => {
     }
   };
 
+  const [streamingContent, setStreamingMessage] = useState<string | null>(null);
+  const [streamingReferences, setStreamingReferences] = useState<KnowledgeChunk[]>([]);
+
   const handleSend = async () => {
     if (!input.trim() || loading || isOverLimit) return;
     
@@ -237,10 +241,11 @@ export const ChatAssistant: React.FC = () => {
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setLoading(true);
+    setStreamingMessage(''); // Initialize streaming state
 
     try {
       // Build document context from uploaded file if present
-      // IMPORTANT: Include transcribed text from images in the context
+      // ... (rest of the context building logic)
       let docContextChunks: KnowledgeChunk[] = [];
       let docContextText = '';
       let visionContext = '';
@@ -274,8 +279,6 @@ export const ChatAssistant: React.FC = () => {
         }
       }
 
-      // Vision context is already built above in the uploadedDoc block
-
       const relevantChunks = KnowledgeBaseService.search(userMsg.content, knowledgeBase);
       const vectorChunks = retrievalMode === 'hybrid' ? VectorStoreService.search(userMsg.content, knowledgeBase, 4) : [];
 
@@ -290,6 +293,8 @@ export const ChatAssistant: React.FC = () => {
       const pageIndexChunks = pageIndexResult.chunks;
       // Priority: uploaded doc > knowledge base
       let combinedReferences = mergeKnowledgeChunks(docContextChunks, [...relevantChunks, ...pageIndexChunks, ...vectorChunks], 6);
+      setStreamingReferences(combinedReferences);
+      
       let selfImproveApplied = false;
       let rerankedChunkIds: string[] = [];
       if (selfImproveEnabled) {
@@ -318,38 +323,42 @@ export const ChatAssistant: React.FC = () => {
         ? combinedReferences.map((chunk, index) => `Reference ${index + 1} (${chunk.sourceTitle || 'Knowledge Base'}): ${chunk.text}`).join('\n\n')
         : '';
       const contextInfo = [guardrailText, docContextInfo, referencesText].filter(Boolean).join('\n\n');
-      // Initialize empty model message for streaming
-      const modelMsg: ChatMessage = { 
-        role: 'model', 
-        content: '', 
-        timestamp: Date.now(),
-        references: combinedReferences
-      };
-      setMessages(prev => [...prev, modelMsg]);
 
-      // Streaming support
+      // Check if we have images to send for multi-modal vision
+      let imagesToSend: string[] = [];
+      if (visionRag) {
+        if (uploadedDoc?.images?.length) {
+          imagesToSend = uploadedDoc.images.slice(0, 4); // Send first 4 images/pages
+        } else {
+          // Check knowledge base references for images
+          const referencedDocIds = Array.from(new Set(combinedReferences.map(r => r.docId).filter(Boolean)));
+          referencedDocIds.forEach(id => {
+            const doc = knowledgeBase.find(d => d.id === id);
+            if (doc?.pageImages && doc.pageImages.length) {
+              imagesToSend.push(...doc.pageImages.slice(0, 2)); // Limit KB images to 2 per doc
+            }
+          });
+          imagesToSend = imagesToSend.slice(0, 4); // Total limit 4
+        }
+      }
+
+      // Streaming support with multi-modal vision
       let fullResponse = '';
       const responseText = await chatSessionRef.current.sendMessage(
         userMsg.content, 
         contextInfo,
         (token) => {
           fullResponse += token;
-          setMessages(prev => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.role === 'model') {
-              last.content = fullResponse;
-            }
-            return next;
-          });
-        }
+          setStreamingMessage(fullResponse); // Update local state ONLY
+        },
+        imagesToSend.length > 0 ? imagesToSend : undefined
       );
 
       // Final synchronization and vision RAG if needed
       let finalResponse = responseText || fullResponse;
       
-      // Optional vision RAG for knowledge base referenced docs (only if no uploaded doc vision was done)
-      if (visionRag && !uploadedDoc?.images?.length) {
+      // Optional vision RAG for knowledge base referenced docs (only if no images were sent directly)
+      if (visionRag && imagesToSend.length === 0 && !uploadedDoc?.images?.length) {
         const referencedDocIds = Array.from(new Set(combinedReferences.map(r => r.docId).filter(Boolean)));
         const images: string[] = [];
         referencedDocIds.forEach(id => {
@@ -370,15 +379,16 @@ export const ChatAssistant: React.FC = () => {
         }
       }
 
-      setMessages(prev => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last && last.role === 'model') {
-          last.content = finalResponse || "I'm sorry, I couldn't generate a response.";
-          last.timestamp = Date.now();
-        }
-        return next;
-      });
+      // Sync the final complete message to global context ONCE
+      const modelMsg: ChatMessage = { 
+        role: 'model', 
+        content: finalResponse || "I'm sorry, I couldn't generate a response.", 
+        timestamp: Date.now(),
+        references: combinedReferences
+      };
+      setMessages(prev => [...prev, modelMsg]);
+      setStreamingMessage(null); // Clear streaming state
+      setStreamingReferences([]);
       
       // Play notification sound when AI responds
       playNotificationSound();
@@ -411,6 +421,7 @@ export const ChatAssistant: React.FC = () => {
       setUploadedDoc(null);
     } catch (error) {
       console.error(error);
+      setStreamingMessage(null); // Clear on error
       let errorMessage = "I encountered an error connecting to the service.";
       
       if (error instanceof Error) {
@@ -439,6 +450,9 @@ export const ChatAssistant: React.FC = () => {
     // Use custom comment if provided, otherwise fall back to default
     const note = feedbackComment.trim() || (rating > 0 ? 'Chat response helpful' : 'Needs more accuracy');
     recordFeedback('chat', rating, note, lastHistoryEntryId);
+    // Trigger animation
+    setFeedbackAnimation(rating > 0 ? 'up' : 'down');
+    setTimeout(() => setFeedbackAnimation(null), 800); // Reset after animation
     // Reset feedback input
     setFeedbackComment('');
     setShowFeedbackInput(false);
@@ -465,7 +479,7 @@ export const ChatAssistant: React.FC = () => {
     try {
       if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
         // Extract images from PDF
-        const pdfjs = await import('pdfjs-dist/legacy/build/pdf');
+        const pdfjs = await import('pdfjs-dist/build/pdf.mjs');
         const pdf = await pdfjs.getDocument(await file.arrayBuffer()).promise;
         const pageCount = Math.min(pdf.numPages, 8); // Limit to 8 pages
         const images: string[] = [];
@@ -836,7 +850,27 @@ export const ChatAssistant: React.FC = () => {
              </div>
             );
           })}
-          {loading && (
+          {streamingContent !== null && (
+            <div className="flex justify-start">
+              <div className={`
+                max-w-[85%] px-6 py-4 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800
+                bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-none
+              `}>
+                <div className="flex flex-col">
+                  <div className="flex items-center space-x-2 mb-2 text-xs font-bold text-primary-600 dark:text-primary-400 uppercase tracking-wider">
+                    <Sparkles size={12} /> <span>{config.provider === 'gemini' ? 'Wrytica AI' : `Local (${config.modelName})`}</span>
+                  </div>
+                  {renderMessageContent(streamingContent)}
+                  {streamingReferences.length > 0 && (
+                    <div className="mt-3 text-[11px] text-slate-500 italic">
+                      Searching knowledge base and building response...
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          {loading && streamingContent === null && (
             <div className="flex justify-start">
               <div className="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-bl-none px-6 py-4 flex items-center space-x-2">
                  <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
@@ -1009,23 +1043,31 @@ export const ChatAssistant: React.FC = () => {
               <button
                 onClick={() => handleFeedback(1)}
                 disabled={!lastHistoryEntryId}
-                className="flex items-center gap-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50"
+                className={`flex items-center gap-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50 transition-all duration-300 ${
+                  feedbackAnimation === 'up' 
+                    ? 'bg-green-100 border-green-300 text-green-700 dark:bg-green-900/30 dark:border-green-700 dark:text-green-400 scale-110' 
+                    : ''
+                }`}
               >
-                <ThumbsUp size={12} />
+                <ThumbsUp size={12} className={feedbackAnimation === 'up' ? 'animate-pulse' : ''} />
                 Useful
               </button>
               <button
                 onClick={() => handleFeedback(-1)}
                 disabled={!lastHistoryEntryId}
-                className="flex items-center gap-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50"
+                className={`flex items-center gap-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50 transition-all duration-300 ${
+                  feedbackAnimation === 'down' 
+                    ? 'bg-red-100 border-red-300 text-red-700 dark:bg-red-900/30 dark:border-red-700 dark:text-red-400 scale-110' 
+                    : ''
+                }`}
               >
-                <ThumbsDown size={12} />
+                <ThumbsDown size={12} className={feedbackAnimation === 'down' ? 'animate-pulse' : ''} />
                 Needs work
               </button>
               <button
                 onClick={() => setShowFeedbackInput(!showFeedbackInput)}
                 disabled={!lastHistoryEntryId}
-                className={`flex items-center gap-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50 ${showFeedbackInput ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400' : ''}`}
+                className={`flex items-center gap-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50 transition-all duration-300 ${showFeedbackInput ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400' : ''}`}
               >
                 <MessageSquare size={12} />
                 Add note
@@ -1094,9 +1136,22 @@ export const ChatAssistant: React.FC = () => {
               <span>{traceOpen ? 'Hide' : 'Show'}</span>
             </button>
             {traceOpen && (
-              <pre className="text-[11px] whitespace-pre-wrap px-3 pb-3 text-slate-600 dark:text-slate-300 max-h-40 overflow-auto">
-                {reasoningTrace || 'No reasoning available for this turn.'}
-              </pre>
+              <div className="px-3 pb-3">
+                {reasoningTrace ? (
+                  <pre className="text-[11px] whitespace-pre-wrap text-slate-600 dark:text-slate-300 max-h-40 overflow-auto">
+                    {reasoningTrace}
+                  </pre>
+                ) : (
+                  <div className="text-[11px] text-slate-500 italic py-2">
+                    {knowledgeBase.length === 0 
+                      ? "Knowledge base is currently empty. Add documents to enable tree search reasoning."
+                      : !knowledgeBase.some(doc => doc.pageIndex && doc.pageIndex.length > 0)
+                        ? "Documents in knowledge base lack PageIndex structure. Use 'Bridge PageIndex Folder' or 'Import Indexed Data' to enable tree reasoning."
+                        : "No relevant structured nodes were found for this query in the knowledge base."
+                    }
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

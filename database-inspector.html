@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Database Inspector - Where are chunks stored?</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
+        button { padding: 10px 20px; margin: 10px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        button:hover { background: #0056b3; }
+        .storage-info { background: #e9ecef; padding: 15px; margin: 10px 0; border-radius: 4px; }
+        .data-display { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 4px; max-height: 400px; overflow-y: auto; }
+        .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 10px 0; border-radius: 4px; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 10px 0; border-radius: 4px; }
+        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #f2f2f2f; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🗄️ Database Inspector</h1>
+        <p>This page shows where your chunks and documents are stored.</p>
+        
+        <div class="warning">
+            <strong>⚠️ Important:</strong> Chunks are NOT stored separately. They are embedded into vectors and stored in the vector store.
+        </div>
+        
+        <button onclick="inspectStorage()">🔍 Inspect Browser Storage</button>
+        <button onclick="clearStorage()">🗑️ Clear All Storage</button>
+        <button onclick="exportStorage()">📤 Export Data</button>
+        
+        <div id="storage-info" class="storage-info" style="display: none;">
+            <h3>Storage Information:</h3>
+            <div id="storage-details"></div>
+        </div>
+        
+        <div id="data-display" class="data-display" style="display: none;">
+            <h3>Stored Data:</h3>
+            <div id="data-details"></div>
+        </div>
+    </div>
+
+    <script>
+        const DB_NAME = 'wrytica_db';
+        const DB_VERSION = 10;
+        
+        async function inspectStorage() {
+            console.log('Inspecting browser storage...');
+            
+            // Check IndexedDB
+            try {
+                const db = await openDB(DB_NAME, DB_VERSION);
+                console.log('IndexedDB opened:', db);
+                
+                let html = '<h4>IndexedDB Object Stores:</h4>';
+                html += '<table><tr><th>Store Name</th><th>Count</th><th>Size Estimate</th><th>Description</th></tr>';
+                
+                for (const storeName of db.objectStoreNames) {
+                    const tx = db.transaction(storeName, 'readonly');
+                    const store = tx.objectStore(storeName);
+                    const count = await store.count();
+                    
+                    let description = '';
+                    let sizeEstimate = 'Unknown';
+                    
+                    switch(storeName) {
+                        case 'knowledgeBase':
+                            description = 'Document metadata and content (truncated to 50KB)';
+                            sizeEstimate = `${(count * 50 * 1024).toLocaleString()} bytes`;
+                            break;
+                        case 'vectorStore':
+                            description = 'Embeddings/vectors for RAG search (384-dim floats per chunk)';
+                            sizeEstimate = `${(count * 384 * 4).toLocaleString()} bytes`;
+                            break;
+                        case 'chatSessions':
+                            description = 'Chat history and conversations';
+                            sizeEstimate = `${(count * 10 * 1024).toLocaleString()} bytes`;
+                            break;
+                        case 'toolHistory':
+                            description = 'Timeline of tool usage and actions';
+                            sizeEstimate = `${(count * 2 * 1024).toLocaleString()} bytes`;
+                            break;
+                        case 'settings':
+                            description = 'App configuration and preferences';
+                            sizeEstimate = `${(count * 5 * 1024).toLocaleString()} bytes`;
+                            break;
+                    }
+                    
+                    html += `<tr>
+                        <td>${storeName}</td>
+                        <td>${count.toLocaleString()}</td>
+                        <td>${sizeEstimate}</td>
+                        <td>${description}</td>
+                    </tr>`;
+                }
+                
+                html += '</table>';
+                
+                // Get some sample data
+                const kbStore = db.transaction('knowledgeBase', 'readonly').objectStore('knowledgeBase');
+                const kbDocs = await kbStore.getAll();
+                
+                if (kbDocs.length > 0) {
+                    html += '<h4>Sample Document:</h4>';
+                    html += '<pre>' + JSON.stringify(kbDocs[0], null, 2).substring(0, 1000) + '...</pre>';
+                }
+                
+                document.getElementById('storage-details').innerHTML = html;
+                document.getElementById('storage-info').style.display = 'block';
+                
+                db.close();
+                
+            } catch (error) {
+                console.error('Error inspecting IndexedDB:', error);
+                alert('Error accessing IndexedDB: ' + error.message);
+            }
+            
+            // Check LocalStorage
+            let localStorageHtml = '<h4>LocalStorage:</h4>';
+            let localStorageSize = 0;
+            
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                const value = localStorage.getItem(key);
+                localStorageSize += (key.length + value.length) * 2; // UTF-16
+                localStorageHtml += `<div><strong>${key}:</strong> ${value.length} chars</div>`;
+            }
+            
+            localStorageHtml += `<div><strong>Total LocalStorage:</strong> ${(localStorageSize/1024).toFixed(1)} KB</div>`;
+            document.getElementById('storage-details').innerHTML += localStorageHtml;
+            
+            // Check SessionStorage
+            let sessionStorageHtml = '<h4>SessionStorage:</h4>';
+            let sessionStorageSize = 0;
+            
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                const value = sessionStorage.getItem(key);
+                sessionStorageSize += (key.length + value.length) * 2;
+                sessionStorageHtml += `<div><strong>${key}:</strong> ${value.length} chars</div>`;
+            }
+            
+            sessionStorageHtml += `<div><strong>Total SessionStorage:</strong> ${(sessionStorageSize/1024).toFixed(1)} KB</div>`;
+            document.getElementById('storage-details').innerHTML += sessionStorageHtml;
+        }
+        
+        async function clearStorage() {
+            if (!confirm('⚠️ This will delete ALL stored data including your documents and vectors. Continue?')) {
+                return;
+            }
+            
+            try {
+                // Clear IndexedDB
+                await indexedDB.deleteDatabase(DB_NAME);
+                
+                // Clear LocalStorage
+                localStorage.clear();
+                
+                // Clear SessionStorage
+                sessionStorage.clear();
+                
+                alert('✅ All storage cleared. Please refresh the page.');
+                location.reload();
+                
+            } catch (error) {
+                alert('Error clearing storage: ' + error.message);
+            }
+        }
+        
+        async function exportStorage() {
+            try {
+                const db = await openDB(DB_NAME, DB_VERSION);
+                const exportData = {};
+                
+                for (const storeName of db.objectStoreNames) {
+                    const tx = db.transaction(storeName, 'readonly');
+                    const store = tx.objectStore(storeName);
+                    const data = await store.getAll();
+                    exportData[storeName] = data;
+                }
+                
+                db.close();
+                
+                // Create and download file
+                const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `wrytica_backup_${new Date().toISOString().slice(0, 10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                alert('✅ Data exported successfully');
+                
+            } catch (error) {
+                alert('Error exporting data: ' + error.message);
+            }
+        }
+        
+        function openDB(name, version) {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(name, version);
+                
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve(request.result);
+                
+                request.onupgradeneeded = (event) => {
+                    const db = request.result;
+                    if (!db.objectStoreNames.contains('knowledgeBase')) {
+                        db.createObjectStore('knowledgeBase', { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains('vectorStore')) {
+                        db.createObjectStore('vectorStore', { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains('chatSessions')) {
+                        db.createObjectStore('chatSessions', { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains('toolHistory')) {
+                        db.createObjectStore('toolHistory', { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains('settings')) {
+                        db.createObjectStore('settings', { keyPath: 'id' });
+                    }
+                };
+            });
+        }
+    </script>
+</body>
+</html>

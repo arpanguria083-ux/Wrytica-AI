@@ -15,13 +15,13 @@ const REASONING_MODELS: Record<string, ModelCapabilities> = {
     supportsStructuredOutput: true,
     recommendedPromptStyle: 'reasoning'
   },
-  'gemini-2.5-flash': {
+  'gemini-2.0-flash': {
     supportsReasoning: true,
     supportsChainOfThought: true,
     supportsStructuredOutput: true,
     recommendedPromptStyle: 'enhanced'
   },
-  'gemini-2.5-pro': {
+  'gemini-1.5-pro': {
     supportsReasoning: true,
     supportsChainOfThought: true,
     supportsStructuredOutput: true,

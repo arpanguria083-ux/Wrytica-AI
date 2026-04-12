@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Full Pipeline Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .info { background-color: #d1ecf1; border-color: #bee5eb; }
+        button { padding: 10px 20px; margin: 10px 5px; cursor: pointer; }
+        pre { background: #f8f9fa; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Backend Integration Test</h1>
+    
+    <div class="test-section info">
+        <h3>Step 1: Backend Connection Test</h3>
+        <button onclick="testBackend()">Test Backend Health</button>
+        <div id="backend-result"></div>
+    </div>
+    
+    <div class="test-section info">
+        <h3>Step 2: File Processing Test</h3>
+        <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.pptx,.txt">
+        <button onclick="testFileProcessing()">Process File</button>
+        <div id="file-result"></div>
+    </div>
+    
+    <div class="test-section info">
+        <h3>Step 3: Large File Simulation</h3>
+        <button onclick="testLargeFile()">Create & Process 10MB Test File</button>
+        <div id="large-result"></div>
+    </div>
+    
+    <div id="logs">
+        <h3>📋 Console Logs:</h3>
+        <pre id="console-output"></pre>
+    </div>
+
+    <script>
+        const consoleOutput = document.getElementById('console-output');
+        const originalLog = console.log;
+        const originalError = console.error;
+        
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            consoleOutput.textContent += new Date().toLocaleTimeString() + ': ' + args.join(' ') + '\n';
+        };
+        
+        console.error = function(...args) {
+            originalError.apply(console, args);
+            consoleOutput.textContent += new Date().toLocaleTimeString() + ': ERROR: ' + args.join(' ') + '\n';
+        };
+        
+        async function testBackend() {
+            const resultDiv = document.getElementById('backend-result');
+            resultDiv.innerHTML = 'Testing...';
+            
+            try {
+                console.log('🔍 Testing backend connection...');
+                const response = await fetch('http://localhost:8000/health');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            <h4>✅ Backend Connected!</h4>
+                            <p>Status: ${data.status}</p>
+                            <p>Version: ${data.version}</p>
+                            <p>PDF Processing: ${data.features.pdf_processing ? '✅' : '❌'}</p>
+                            <p>Office Processing: ${data.features.office_processing ? '✅' : '❌'}</p>
+                            <p>Embeddings: ${data.features.embeddings ? '✅' : '❌'}</p>
+                        </div>
+                    `;
+                    console.log('✅ Backend health check successful:', data);
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h4>❌ Backend Connection Failed</h4>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+                console.error('❌ Backend connection failed:', error);
+            }
+        }
+        
+        async function testFileProcessing() {
+            const fileInput = document.getElementById('fileInput');
+            const resultDiv = document.getElementById('file-result');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Please select a file first');
+                return;
+            }
+            
+            resultDiv.innerHTML = 'Processing...';
+            
+            try {
+                console.log(`📁 Processing file: ${file.name} (${(file.size/1024/1024).toFixed(1)}MB)`);
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const response = await fetch('http://localhost:8000/api/documents/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            <h4>✅ File Processed Successfully!</h4>
+                            <p>Chunks: ${data.total_chunks}</p>
+                            <p>Processing Time: ${data.processing_time_ms}ms</p>
+                            <p>File Size: ${(data.file_size_bytes/1024/1024).toFixed(1)}MB</p>
+                        </div>
+                    `;
+                    console.log('✅ File processing successful:', data);
+                } else {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h4>❌ File Processing Failed</h4>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+                console.error('❌ File processing failed:', error);
+            }
+        }
+        
+        async function testLargeFile() {
+            const resultDiv = document.getElementById('large-result');
+            resultDiv.innerHTML = 'Creating test file...';
+            
+            try {
+                // Create a 10MB test file
+                const largeContent = 'x'.repeat(10 * 1024 * 1024);
+                const blob = new Blob([largeContent], { type: 'text/plain' });
+                const largeFile = new File([blob], 'large-test-file.txt', { type: 'text/plain' });
+                
+                console.log(`📄 Created test file: ${largeFile.name} (${(largeFile.size/1024/1024).toFixed(1)}MB)`);
+                
+                resultDiv.innerHTML = 'Processing large file...';
+                
+                const formData = new FormData();
+                formData.append('file', largeFile);
+                
+                const response = await fetch('http://localhost:8000/api/documents/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            <h4>✅ Large File Processed Successfully!</h4>
+                            <p>Chunks: ${data.total_chunks}</p>
+                            <p>Processing Time: ${data.processing_time_ms}ms</p>
+                            <p>This proves backend can handle large files!</p>
+                        </div>
+                    `;
+                    console.log('✅ Large file processing successful:', data);
+                } else {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h4>❌ Large File Processing Failed</h4>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+                console.error('❌ Large file processing failed:', error);
+            }
+        }
+        
+        // Auto-test on load
+        window.onload = () => {
+            console.log('🚀 Full Pipeline Test Loaded');
+            testBackend();
+        };
+    </script>
+</body>
+</html>

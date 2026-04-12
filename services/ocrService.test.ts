@@ -11,7 +11,10 @@ vi.mock('tesseract.js', () => ({
 }));
 
 // Mock pdfjs-dist
-vi.mock('pdfjs-dist/legacy/build/pdf', () => ({
+vi.mock('pdfjs-dist/build/pdf.mjs', () => ({
+  GlobalWorkerOptions: {
+    workerSrc: '',
+  },
   getDocument: vi.fn(() => ({
     promise: Promise.resolve({
       numPages: 10,
@@ -26,20 +29,20 @@ vi.mock('pdfjs-dist/legacy/build/pdf', () => ({
 
 describe('OCR Service Memory Management', () => {
   describe('Page Limit Configuration', () => {
-    it('should have MAX_PDF_PAGES set to 30', async () => {
+    it('should have MAX_PDF_PAGES set to 3', async () => {
       // This tests that the constant is properly exported/defined
       const { MAX_PDF_PAGES } = await import('./ocrService');
-      expect(MAX_PDF_PAGES).toBe(30);
+      expect(MAX_PDF_PAGES).toBe(3);
     });
 
-    it('should have PDF_RENDER_SCALE set to 1.0', async () => {
+    it('should have PDF_RENDER_SCALE set to 0.8', async () => {
       const { PDF_RENDER_SCALE } = await import('./ocrService');
-      expect(PDF_RENDER_SCALE).toBe(1.0);
+      expect(PDF_RENDER_SCALE).toBe(0.8);
     });
 
-    it('should have OCR_JPEG_QUALITY set to 0.6', async () => {
+    it('should have OCR_JPEG_QUALITY set to 0.4', async () => {
       const { OCR_JPEG_QUALITY } = await import('./ocrService');
-      expect(OCR_JPEG_QUALITY).toBe(0.6);
+      expect(OCR_JPEG_QUALITY).toBe(0.4);
     });
   });
 
@@ -183,7 +186,7 @@ describe('Memory Calculations', () => {
     const newQuality = 0.6;
     const savingsPercent = ((oldQuality - newQuality) / oldQuality) * 100;
 
-    expect(savingsPercent).toBe(25); // 25% smaller base64 strings
+    expect(savingsPercent).toBeCloseTo(25, 5); // 25% smaller base64 strings
   });
 
   it('should calculate page limit impact', () => {

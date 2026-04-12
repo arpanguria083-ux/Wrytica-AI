@@ -3,7 +3,7 @@ import { Quote, BookOpen, Copy, Check, ArrowRight, FileCode, Layers, ExternalLin
 import { AIService } from '../services/aiService';
 import { CitationStyle, CITATION_STYLES_LIST, copyToClipboard, CitationResponse, generateId, buildContextEnhancement, TimelineEntry, CustomCitationFormat } from '../utils';
 import { useAppContext } from '../contexts/AppContext';
-import { detectSourceType, fetchMetadata, SourceMetadata, SourceType, buildCitationFromMetadata, generateBibtexFromMetadata, isValidDOI, isValidURL, extractDOI, buildCustomCitation } from '../services/citationService';
+import { detectSourceType, fetchMetadata, SourceMetadata, SourceType, buildCitationFromMetadata, generateBibtexFromMetadata, isValidDOI, isValidURL, extractDOI, buildCustomCitation, deriveMetadataFromInput } from '../services/citationService';
 
 export const CitationGenerator: React.FC = () => {
   const { citationState, setCitationState, config, language, guardrails, selectedGuardrailId, recordToolHistory, recordFeedback, getFeedbackHints, saveInputText, getSavedInput, getCitationHistory } = useAppContext();
@@ -13,6 +13,7 @@ export const CitationGenerator: React.FC = () => {
   const [historyStyleFilter, setHistoryStyleFilter] = useState<string>('all');
   const guardrail = guardrails.find(g => g.id === selectedGuardrailId) || undefined;
   const [lastHistoryEntryId, setLastHistoryEntryId] = useState<string | null>(null);
+  const [feedbackAnimation, setFeedbackAnimation] = useState<'up' | 'down' | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingMetadata, setFetchingMetadata] = useState(false);
   const [copiedCitation, setCopiedCitation] = useState(false);
@@ -672,13 +673,23 @@ export const CitationGenerator: React.FC = () => {
       const componentsToUse = isEditing ? editedComponents : (sourceMetadata || null);
       if (componentsToUse) {
         promptWithContext = `Source: ${localSourceInput}\n\nExtracted Metadata:\n- Author: ${componentsToUse.author}\n- Title: ${componentsToUse.title}\n- Source: ${componentsToUse.source}\n- Date: ${componentsToUse.date}\n- DOI/URL: ${componentsToUse.doi_or_url}`;
+        
+        // Add extra technical fields if available
+        if (sourceMetadata?.journal) promptWithContext += `\n- Journal: ${sourceMetadata.journal}`;
+        if (sourceMetadata?.volume) promptWithContext += `\n- Volume: ${sourceMetadata.volume}`;
+        if (sourceMetadata?.issue) promptWithContext += `\n- Issue: ${sourceMetadata.issue}`;
+        if (sourceMetadata?.pages) promptWithContext += `\n- Pages: ${sourceMetadata.pages}`;
       }
       
       const data = await AIService.generateCitation(config, promptWithContext, style, language, enhancement);
       
-      // If LLM failed but we have metadata, use fallback
-      // Use edited components if in edit mode, otherwise use fetched metadata
-      const fallbackComponents = isEditing ? editedComponents : (sourceMetadata || null);
+      // Validation: Ensure we have at least a formatted citation or components
+      if (!data.formatted_citation && (!data.components || !data.components.title)) {
+        throw new Error('AI returned empty or invalid citation structure');
+      }
+      
+      // If LLM failed or returned incomplete data, but we have metadata, use fallback
+      const fallbackComponents = isEditing ? editedComponents : (sourceMetadata || deriveMetadataFromInput(localSourceInput));
       
       // Check if this is a custom format
       const customFormat = customFormats.find(f => f.name === style);
@@ -694,7 +705,8 @@ export const CitationGenerator: React.FC = () => {
           source: fallbackComponents.source,
           doi_or_url: fallbackComponents.doi_or_url
         };
-      } else if (!data.formatted_citation && fallbackComponents) {
+      } else if ((!data.formatted_citation || data.formatted_citation.toLowerCase().includes('unknown')) && fallbackComponents) {
+        // Use scientific-grade fallback for better precision
         data.formatted_citation = buildCitationFromMetadata(fallbackComponents as SourceMetadata, style);
         data.bibtex = generateBibtexFromMetadata(fallbackComponents as SourceMetadata);
         data.components = {
@@ -720,6 +732,29 @@ export const CitationGenerator: React.FC = () => {
       setLastHistoryEntryId(entryId);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate citation';
+      
+      // Secondary fallback: If JSON parsing or AI failed completely, but we have metadata,
+      // generate it manually right here without the AI.
+      let manualFallback = isEditing ? editedComponents : (metadata || deriveMetadataFromInput(localSourceInput));
+
+      if (manualFallback && manualFallback.title) {
+        console.log('Using emergency manual fallback for citation');
+        const fallbackData: CitationResponse = {
+          formatted_citation: buildCitationFromMetadata(manualFallback as SourceMetadata, style),
+          bibtex: generateBibtexFromMetadata(manualFallback as SourceMetadata),
+          components: {
+            author: manualFallback.author,
+            date: manualFallback.date,
+            title: manualFallback.title,
+            source: manualFallback.source,
+            doi_or_url: manualFallback.doi_or_url
+          }
+        };
+        setResult(fallbackData);
+        setError(null);
+        return;
+      }
+      
       setError(errorMessage);
       console.error(err);
     } finally {
@@ -745,6 +780,9 @@ export const CitationGenerator: React.FC = () => {
     if (!lastHistoryEntryId) return;
     const note = rating > 0 ? 'Citation looked accurate' : 'Citation needs review';
     recordFeedback('citation', rating, note, lastHistoryEntryId);
+    // Trigger animation
+    setFeedbackAnimation(rating > 0 ? 'up' : 'down');
+    setTimeout(() => setFeedbackAnimation(null), 800); // Reset after animation
   };
 
   // Batch citation functions
@@ -819,15 +857,16 @@ export const CitationGenerator: React.FC = () => {
 
         let data = await AIService.generateCitation(config, promptWithContext, style, language, enhancement);
 
-        if (!data.formatted_citation && componentsToUse) {
-          data.formatted_citation = buildCitationFromMetadata(componentsToUse as SourceMetadata, style);
-          data.bibtex = generateBibtexFromMetadata(componentsToUse as SourceMetadata);
+        const fallbackComponents = componentsToUse || deriveMetadataFromInput(source);
+        if ((!data.formatted_citation || data.formatted_citation === '...' || data.formatted_citation.toLowerCase().includes('unknown')) && fallbackComponents) {
+          data.formatted_citation = buildCitationFromMetadata(fallbackComponents as SourceMetadata, style);
+          data.bibtex = generateBibtexFromMetadata(fallbackComponents as SourceMetadata);
           data.components = {
-            author: componentsToUse.author,
-            date: componentsToUse.date,
-            title: componentsToUse.title,
-            source: componentsToUse.source,
-            doi_or_url: componentsToUse.doi_or_url
+            author: fallbackComponents.author,
+            date: fallbackComponents.date,
+            title: fallbackComponents.title,
+            source: fallbackComponents.source,
+            doi_or_url: fallbackComponents.doi_or_url
           };
         }
 
@@ -1823,7 +1862,7 @@ export const CitationGenerator: React.FC = () => {
       </div>
       )}
 
-      {result && !batchMode && (
+      {result && result.formatted_citation && result.formatted_citation !== '...' && !batchMode && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
           
           {/* Main Citation Result */}
@@ -1849,16 +1888,24 @@ export const CitationGenerator: React.FC = () => {
                <span>Rate this citation:</span>
                <button
                  onClick={() => handleFeedback(1)}
-                 className="flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900"
+                 className={`flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 transition-all duration-300 ${
+                   feedbackAnimation === 'up' 
+                     ? 'bg-green-100 border-green-300 text-green-700 dark:bg-green-900/30 dark:border-green-700 dark:text-green-400 scale-110' 
+                     : ''
+                 }`}
                >
-                 <ThumbsUp size={12} />
+                 <ThumbsUp size={12} className={feedbackAnimation === 'up' ? 'animate-pulse' : ''} />
                  Helpful
                </button>
                <button
                  onClick={() => handleFeedback(-1)}
-                 className="flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900"
+                 className={`flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 transition-all duration-300 ${
+                   feedbackAnimation === 'down' 
+                     ? 'bg-red-100 border-red-300 text-red-700 dark:bg-red-900/30 dark:border-red-700 dark:text-red-400 scale-110' 
+                     : ''
+                 }`}
                >
-                 <ThumbsDown size={12} />
+                 <ThumbsDown size={12} className={feedbackAnimation === 'down' ? 'animate-pulse' : ''} />
                  Needs tweaks
                </button>
             </div>

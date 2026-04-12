@@ -47,8 +47,105 @@ export const detectSourceType = (input: string): SourceType => {
   const trimmed = input.trim();
   if (isValidDOI(trimmed) || extractDOI(trimmed)) return 'doi';
   if (isValidURL(trimmed)) return 'url';
+  if (trimmed.startsWith('@') && trimmed.includes('{')) return 'text'; // Likely BibTeX
   if (trimmed.length > 10 && !trimmed.includes('http') && !trimmed.includes('www.')) return 'title';
   return 'text';
+};
+
+// Simple local BibTeX parser for fallback
+export const parseBibTeX = (bibtex: string): Partial<SourceMetadata> => {
+  const meta: Partial<SourceMetadata> = {};
+  
+  try {
+    // Extract title
+    const titleMatch = bibtex.match(/title\s*=\s*[{"]\s*(.*?)\s*[}"]/i);
+    if (titleMatch) meta.title = titleMatch[1];
+    
+    // Extract author
+    const authorMatch = bibtex.match(/author\s*=\s*[{"]\s*(.*?)\s*[}"]/i);
+    if (authorMatch) meta.author = authorMatch[1].replace(/\s+and\s+/g, ', ');
+    
+    // Extract year/date
+    const yearMatch = bibtex.match(/year\s*=\s*[{"]\s*(\d+)\s*[}"]/i) || bibtex.match(/year\s*=\s*(\d+)/i);
+    if (yearMatch) meta.date = yearMatch[1];
+    
+    // Extract source (journal/booktitle)
+    const sourceMatch = bibtex.match(/(?:journal|booktitle)\s*=\s*[{"]\s*(.*?)\s*[}"]/i);
+    if (sourceMatch) meta.source = sourceMatch[1];
+    
+    // Extract DOI/URL
+    const doiMatch = bibtex.match(/doi\s*=\s*[{"]\s*(.*?)\s*[}"]/i);
+    if (doiMatch) meta.doi_or_url = doiMatch[1].startsWith('http') ? doiMatch[1] : `https://doi.org/${doiMatch[1]}`;
+    
+    const urlMatch = bibtex.match(/url\s*=\s*[{"]\s*(.*?)\s*[}"]/i);
+    if (urlMatch && !meta.doi_or_url) meta.doi_or_url = urlMatch[1];
+  } catch (e) {
+    console.warn('Failed to parse BibTeX locally', e);
+  }
+  
+  return meta;
+};
+
+export const deriveMetadataFromInput = (input: string): SourceMetadata | null => {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const sourceType = detectSourceType(trimmed);
+
+  if (trimmed.startsWith('@')) {
+    const parsed = parseBibTeX(trimmed);
+    if (parsed.title) {
+      return {
+        type: 'text',
+        author: parsed.author || 'Unknown',
+        date: parsed.date || 'n.d.',
+        title: parsed.title,
+        source: parsed.source || 'Unknown Source',
+        doi_or_url: parsed.doi_or_url || '',
+        journal: parsed.journal,
+        volume: parsed.volume,
+        issue: parsed.issue,
+        pages: parsed.pages,
+        publisher: parsed.publisher,
+        typeOfResource: parsed.typeOfResource
+      };
+    }
+  }
+
+  if (sourceType === 'doi') {
+    const doi = extractDOI(trimmed) || trimmed;
+    return {
+      type: 'doi',
+      author: 'Unknown',
+      date: 'n.d.',
+      title: 'Unknown Title',
+      source: 'Unknown Source',
+      doi_or_url: doi.startsWith('http') ? doi : `https://doi.org/${doi}`
+    };
+  }
+
+  if (sourceType === 'url') {
+    let hostname = 'Web Source';
+    try {
+      hostname = new URL(trimmed).hostname;
+    } catch {}
+    return {
+      type: 'url',
+      author: 'Unknown',
+      date: 'n.d.',
+      title: hostname,
+      source: hostname,
+      doi_or_url: trimmed
+    };
+  }
+
+  return {
+    type: sourceType,
+    author: 'Unknown',
+    date: 'n.d.',
+    title: trimmed,
+    source: 'Unknown Source',
+    doi_or_url: ''
+  };
 };
 
 // Fetch metadata from CrossRef API for DOI with timeout and retry
@@ -185,76 +282,139 @@ export const fetchMetadata = async (input: string): Promise<SourceMetadata | nul
 
 // Build citation from metadata
 export const buildCitationFromMetadata = (metadata: SourceMetadata, style: CitationStyle): string => {
-  const { author, date, title, source, doi_or_url, journal, volume, issue, pages, publisher } = metadata;
+  const { author, date, title, source, doi_or_url, journal, volume, issue, pages } = metadata;
 
-  const formatAuthor = (auth: string): string => {
-    if (!auth || auth === 'Unknown') return 'Unknown Author';
-    if (auth.includes(',') && !auth.includes(' and ')) {
-      const authors = auth.split(',').map(a => a.trim());
-      return authors.map(a => {
-        const parts = a.split(' ').filter(p => p);
-        if (parts.length >= 2) {
-          const last = parts.pop();
-          const first = parts.map(p => p[0] + '.').join(' ');
-          return `${last}, ${first}`;
-        }
-        return a;
-      }).join(', & ');
+  const normalizeYear = (value: string): string => {
+    if (!value || value === 'n.d.') return 'n.d.';
+    return value.split('-')[0];
+  };
+
+  const cleanTitle = (title || 'Unknown Title').replace(/\.+$/, '');
+  const cleanSource = (journal || source || 'Unknown Source').trim();
+  const year = normalizeYear(date);
+  const doiLike = doi_or_url?.trim() || '';
+  const doiValue = doiLike.replace(/^https?:\/\/doi\.org\//i, '').trim();
+  const doiUrl = doiLike ? (doiLike.startsWith('http') ? doiLike : `https://doi.org/${doiValue}`) : '';
+
+  const splitAuthors = (input: string): string[] => {
+    if (!input || input === 'Unknown') return [];
+    const cleaned = input.replace(/\bet al\.?$/i, '').trim();
+    if (cleaned.includes(' and ')) return cleaned.split(/\s+and\s+/i).map(a => a.trim()).filter(Boolean);
+    if (cleaned.includes(';')) return cleaned.split(';').map(a => a.trim()).filter(Boolean);
+    const commaParts = cleaned.split(',').map(a => a.trim()).filter(Boolean);
+    if (commaParts.length >= 4 && commaParts.length % 2 === 0) {
+      const rebuilt: string[] = [];
+      for (let i = 0; i < commaParts.length; i += 2) rebuilt.push(`${commaParts[i + 1]} ${commaParts[i]}`.trim());
+      return rebuilt;
     }
-    return auth;
+    if (commaParts.length === 2 && cleaned.split(' ').length <= 4) return [`${commaParts[1]} ${commaParts[0]}`.trim()];
+    if (commaParts.length > 1) return commaParts;
+    return [cleaned];
   };
 
-  const formatDate = (d: string): string => {
-    if (d === 'n.d.' || !d) return 'n.d.';
-    return d.split('-')[0];
+  const formatName = (fullName: string, order: 'last-first' | 'first-last', initials = false): string => {
+    const parts = fullName.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return 'Unknown';
+    if (parts.length === 1) return parts[0];
+    const last = parts[parts.length - 1];
+    const givenParts = parts.slice(0, -1);
+    const given = initials ? givenParts.map(p => `${p[0].toUpperCase()}.`).join(' ') : givenParts.join(' ');
+    return order === 'last-first' ? `${last}, ${given}`.trim() : `${given} ${last}`.trim();
   };
 
-  const cleanTitle = title.replace(/\.$/, '');
+  const formatAuthorsByStyle = (raw: string, citationStyle: CitationStyle): string => {
+    if (raw && /\sand\s/i.test(raw) && /,/.test(raw)) {
+      return raw.replace(/\s+/g, ' ').trim();
+    }
+    const authors = splitAuthors(raw);
+    if (!authors.length) return 'Unknown Author';
+    if (citationStyle === 'APA 7') {
+      const formatted = authors.map(a => formatName(a, 'last-first', true));
+      if (formatted.length === 1) return formatted[0];
+      if (formatted.length <= 20) return `${formatted.slice(0, -1).join(', ')}, & ${formatted[formatted.length - 1]}`;
+      return `${formatted.slice(0, 19).join(', ')}, ... ${formatted[formatted.length - 1]}`;
+    }
+    if (citationStyle === 'MLA 9') {
+      const first = formatName(authors[0], 'last-first', false);
+      if (authors.length === 1) return first;
+      if (authors.length === 2) return `${first}, and ${formatName(authors[1], 'first-last', false)}`;
+      return `${first}, et al.`;
+    }
+    if (citationStyle === 'Chicago' || citationStyle === 'Turabian') {
+      const first = formatName(authors[0], 'last-first', false);
+      if (authors.length === 1) return first;
+      if (authors.length <= 10) {
+        const tail = authors.slice(1).map(a => formatName(a, 'first-last', false));
+        if (tail.length === 1) return `${first}, and ${tail[0]}`;
+        return `${first}, ${tail.slice(0, -1).join(', ')}, and ${tail[tail.length - 1]}`;
+      }
+      return `${first}, et al.`;
+    }
+    if (citationStyle === 'IEEE' || citationStyle === 'IEEE Transactions') {
+      const formatted = authors.map(a => formatName(a, 'first-last', true));
+      if (formatted.length === 1) return formatted[0];
+      if (formatted.length <= 6) return `${formatted.slice(0, -1).join(', ')}, and ${formatted[formatted.length - 1]}`;
+      return `${formatted[0]} et al.`;
+    }
+    if (citationStyle === 'Vancouver' || citationStyle === 'AMA' || citationStyle === 'Nature' || citationStyle === 'Science') {
+      const formatted = authors.map(a => {
+        const parts = a.trim().split(/\s+/).filter(Boolean);
+        if (parts.length < 2) return a;
+        const last = parts[parts.length - 1];
+        const initialsOnly = parts.slice(0, -1).map(p => p[0].toUpperCase()).join('');
+        return `${last} ${initialsOnly}`.trim();
+      });
+      return formatted.join(', ');
+    }
+    return authors.map(a => formatName(a, 'last-first', false)).join(', ');
+  };
+
+  const authors = formatAuthorsByStyle(author, style);
+  const authorBase = authors.replace(/\.+$/, '');
+  const volIssue = `${volume ? `, vol. ${volume}` : ''}${issue ? `, no. ${issue}` : ''}`;
+  const pagesPart = pages ? `, pp. ${pages}` : '';
+  const doiPart = doiUrl ? ` ${doiUrl}` : '';
 
   switch (style) {
     case 'APA 7':
-      return `${formatAuthor(author)} (${formatDate(date)}). ${cleanTitle}. ${source}${doi_or_url ? `. ${doi_or_url}` : ''}`;
+      return `${authors} (${year}). ${cleanTitle}. *${cleanSource}*${volume ? `, ${volume}` : ''}${issue ? `(${issue})` : ''}${pages ? `, ${pages}` : ''}.${doiUrl ? ` ${doiUrl}` : ''}`.trim();
     case 'MLA 9':
-      return `${formatAuthor(author)}. "${cleanTitle}." ${source}${date !== 'n.d.' ? `, ${formatDate(date)}` : ''}${doi_or_url ? `, ${doi_or_url}` : ''}.`;
+      return `${authorBase}. "${cleanTitle}." *${cleanSource}*${volIssue}${year !== 'n.d.' ? `, ${year}` : ''}${pagesPart}.${doiPart}`.replace(/\s+\./g, '.').trim();
     case 'Chicago':
-      return `${formatAuthor(author)}. "${cleanTitle}." ${source}${date !== 'n.d.' ? ` (${formatDate(date)})` : ''}${doi_or_url ? `. ${doi_or_url}` : ''}.`;
+      return `${authorBase}. "${cleanTitle}." *${cleanSource}*${volume ? ` ${volume}` : ''}${issue ? `, no. ${issue}` : ''}${year !== 'n.d.' ? ` (${year})` : ''}${pages ? `: ${pages}` : ''}.${doiPart}`.replace(/\s+\./g, '.').trim();
     case 'Harvard':
-      return `${formatAuthor(author)} (${formatDate(date)}) '${cleanTitle}', ${source}${doi_or_url ? `. Available at: ${doi_or_url}` : ''}.`;
+      return `${authorBase} (${year}) '${cleanTitle}', *${cleanSource}*${volume ? `, ${volume}` : ''}${issue ? `(${issue})` : ''}${pages ? `, pp. ${pages}` : ''}.${doiUrl ? ` Available at: ${doiUrl}.` : ''}`.trim();
     case 'IEEE':
-      return `${formatAuthor(author)}, "${cleanTitle}," ${source}${date !== 'n.d.' ? `, ${formatDate(date)}` : ''}${doi_or_url ? `, [Online]. Available: ${doi_or_url}` : ''}.`;
+      return `${authors}, "${cleanTitle}," *${cleanSource}*${volume ? `, vol. ${volume}` : ''}${issue ? `, no. ${issue}` : ''}${pages ? `, pp. ${pages}` : ''}${year !== 'n.d.' ? `, ${year}` : ''}.${doiUrl ? ` [Online]. Available: ${doiUrl}.` : ''}`.trim();
     case 'Vancouver':
-      return `${formatAuthor(author)}. ${cleanTitle}. ${source}. ${formatDate(date)}${doi_or_url ? `. ${doi_or_url}` : ''}.`;
+      return `${authors}. ${cleanTitle}. ${cleanSource}.${year !== 'n.d.' ? ` ${year}` : ''}${volume ? `;${volume}` : ''}${issue ? `(${issue})` : ''}${pages ? `:${pages}` : ''}.${doiUrl ? ` ${doiUrl}.` : ''}`.trim();
     case 'Turabian':
-      return `${formatAuthor(author)}. "${cleanTitle}." ${source}${date !== 'n.d.' ? ` (${formatDate(date)})` : ''}${doi_or_url ? `. ${doi_or_url}` : ''}.`;
+      return `${authorBase}. "${cleanTitle}." *${cleanSource}*${volume ? ` ${volume}` : ''}${issue ? `, no. ${issue}` : ''}${year !== 'n.d.' ? ` (${year})` : ''}${pages ? `: ${pages}` : ''}.${doiPart}`.replace(/\s+\./g, '.').trim();
     case 'ACS':
-      return `${formatAuthor(author)} ${cleanTitle}. ${source} ${formatDate(date)}${doi_or_url ? `. ${doi_or_url}` : ''}.`;
-    case 'AMA':
-      return `${formatAuthor(author)}. ${cleanTitle}. ${source}. ${formatDate(date)}${doi_or_url ? `. ${doi_or_url}` : ''}.`;
-    case 'ASA':
-      return `${formatAuthor(author)} (${formatDate(date)}). ${cleanTitle}. ${source}${doi_or_url ? `. ${doi_or_url}` : ''}.`;
-    case 'AIP':
-      return `${formatAuthor(author)}, "${cleanTitle}," ${source} ${formatDate(date)}${volume ? `, ${volume}` : ''}${issue ? `(${issue})` : ''}${pages ? `, ${pages}` : ''}.`;
-    case 'Nature':
-      return `${formatAuthor(author)} ${cleanTitle}. ${source} ${formatDate(date)}${volume ? ` ${volume}` : ''}${pages ? `, ${pages}` : ''}.`;
-    case 'Science':
-      return `${formatAuthor(author)} ${cleanTitle}. ${source}. ${formatDate(date)}.${doi_or_url ? ` doi:${doi_or_url.replace('https://doi.org/', '')}` : ''}`;
-    case 'IEEE Transactions':
-      return `${formatAuthor(author)}, "${cleanTitle}," ${source}, vol. ${volume || 'n/a'}, no. ${issue || 'n/a'}, pp. ${pages || 'n/a'}, ${formatDate(date)}.`;
     case 'American Chemical Society':
-      return `${formatAuthor(author)}. ${cleanTitle}. ${source}. ${formatDate(date)}${volume ? `, ${volume}` : ''}${issue ? `, ${issue}` : ''}${pages ? `, ${pages}` : ''}.`;
+      return `${authors}. ${cleanTitle}. *${cleanSource}* ${year}${volume ? `, ${volume}` : ''}${issue ? ` (${issue})` : ''}${pages ? `, ${pages}` : ''}.${doiUrl ? ` ${doiUrl}.` : ''}`.trim();
+    case 'AMA':
+      return `${authors}. ${cleanTitle}. ${cleanSource}. ${year}${volume ? `;${volume}` : ''}${issue ? `(${issue})` : ''}${pages ? `:${pages}` : ''}.${doiUrl ? ` doi:${doiValue}.` : ''}`.trim();
+    case 'ASA':
+      return `${authors} (${year}). ${cleanTitle}. *${cleanSource}*${volume ? ` ${volume}` : ''}${issue ? `(${issue})` : ''}${pages ? `:${pages}` : ''}.${doiUrl ? ` ${doiUrl}.` : ''}`.trim();
     case 'Bluebook':
-      return `${formatAuthor(author)}, ${cleanTitle} (${formatDate(date)})` + 
-             (source ? `, ${source}` : '') + 
-             (doi_or_url ? `, ${doi_or_url}` : '') + '.';
+      return `${authors}, ${cleanTitle}, ${cleanSource}${volume ? ` ${volume}` : ''}${pages ? ` ${pages}` : ''} (${year}).${doiUrl ? ` ${doiUrl}.` : ''}`.trim();
     case 'CSE':
-      return `${formatAuthor(author).replace(/, & /g, ', ')} ${cleanTitle}. ${source}. ${formatDate(date)}.`;
+      return `${authors}. ${year}. ${cleanTitle}. ${cleanSource}.${volume ? ` ${volume}` : ''}${issue ? `(${issue})` : ''}${pages ? `:${pages}` : ''}.${doiUrl ? ` ${doiUrl}.` : ''}`.trim();
     case 'ISO 690':
-      return `${formatAuthor(author)}. ${cleanTitle}. ${source}${date !== 'n.d.' ? ` [${formatDate(date)}]` : ''}${doi_or_url ? `. Available at: ${doi_or_url}` : ''}.`;
+      return `${authors}. ${cleanTitle}. ${cleanSource}${year !== 'n.d.' ? ` [${year}]` : ''}.${doiUrl ? ` Available from: ${doiUrl}.` : ''}`.trim();
     case 'BibTeX':
-      // BibTeX format is handled separately in generateBibtexFromMetadata
       return generateBibtexFromMetadata(metadata);
+    case 'AIP':
+      return `${authors}, "${cleanTitle}," ${cleanSource}${volume ? ` ${volume}` : ''}${issue ? `, ${issue}` : ''}${pages ? `, ${pages}` : ''} (${year}).${doiUrl ? ` ${doiUrl}.` : ''}`.trim();
+    case 'Nature':
+      return `${authors} ${cleanTitle}. ${cleanSource}${volume ? ` ${volume}` : ''}${pages ? `, ${pages}` : ''} (${year}).${doiUrl ? ` ${doiUrl}` : ''}`.trim();
+    case 'Science':
+      return `${authors}. ${cleanTitle}. ${cleanSource}${volume ? ` ${volume}` : ''}${pages ? `, ${pages}` : ''} (${year}).${doiUrl ? ` ${doiUrl}` : ''}`.trim();
+    case 'IEEE Transactions':
+      return `${authors}, "${cleanTitle}," ${cleanSource}${volume ? `, vol. ${volume}` : ''}${issue ? `, no. ${issue}` : ''}${pages ? `, pp. ${pages}` : ''}${year !== 'n.d.' ? `, ${year}` : ''}.${doiUrl ? ` doi: ${doiValue}.` : ''}`.trim();
     default:
-      return `${formatAuthor(author)} (${formatDate(date)}). ${cleanTitle}. ${source}.`;
+      return `${authors}. ${cleanTitle}. ${cleanSource}. ${year}.`;
   }
 };
 
@@ -317,11 +477,26 @@ export const buildCustomCitation = (metadata: SourceMetadata, template: string):
 export const generateBibtexFromMetadata = (metadata: SourceMetadata): string => {
   const { author, title, source, doi_or_url, journal, volume, issue, pages, publisher, typeOfResource } = metadata;
 
-  const firstAuthor = author.split(',')[0]?.split(' ')[0]?.toLowerCase() || 'unknown';
+  const splitAuthors = (input: string): string[] => {
+    if (!input || input === 'Unknown') return [];
+    if (input.includes(' and ')) return input.split(/\s+and\s+/i).map(a => a.trim()).filter(Boolean);
+    if (input.includes(';')) return input.split(';').map(a => a.trim()).filter(Boolean);
+    const commaParts = input.split(',').map(a => a.trim()).filter(Boolean);
+    if (commaParts.length >= 4 && commaParts.length % 2 === 0) {
+      const rebuilt: string[] = [];
+      for (let i = 0; i < commaParts.length; i += 2) rebuilt.push(`${commaParts[i + 1]} ${commaParts[i]}`.trim());
+      return rebuilt;
+    }
+    if (commaParts.length > 1) return commaParts;
+    return [input.trim()];
+  };
+
+  const authors = splitAuthors(author);
+  const firstAuthor = authors[0]?.split(' ').slice(-1)[0]?.toLowerCase() || 'unknown';
   const year = metadata.date !== 'n.d.' ? metadata.date.split('-')[0] : 'nd';
   const key = `${firstAuthor}${year}`;
 
-  const bibtexAuthor = author.replace(/ and /g, ' and ').replace(/,/g, ' and ');
+  const bibtexAuthor = authors.length ? authors.join(' and ') : 'Unknown';
 
   const entryType = typeOfResource === 'journal-article' || journal ? 'article' :
                     typeOfResource === 'book' ? 'book' : 'misc';

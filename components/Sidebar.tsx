@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { PenTool, CheckCircle, FileText, MessageSquare, Settings, Feather, Quote, BookOpen, Layers, Camera, History } from 'lucide-react';
+import { PenTool, CheckCircle, FileText, MessageSquare, Settings, Feather, Quote, BookOpen, Layers, Camera, History, Code2 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const navItems = [
@@ -44,16 +44,26 @@ export const Sidebar: React.FC = () => {
         ))}
       </nav>
 
-      <div className="p-4 border-t border-slate-200 dark:border-dark-border">
-         <NavLink
-            to="/settings"
-            className={({ isActive }) => `
-              flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 font-medium
-              ${isActive ? activeClass : inactiveClass}
-            `}
-          >
+      <div className="p-4 border-t border-slate-200 dark:border-dark-border space-y-1">
+        <NavLink
+          to="/settings"
+          className={({ isActive }) => `
+            flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 font-medium
+            ${isActive ? activeClass : inactiveClass}
+          `}
+        >
           <Settings size={20} />
           <span>Settings</span>
+        </NavLink>
+        <NavLink
+          to="/developer"
+          className={({ isActive }) => `
+            flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 font-medium
+            ${isActive ? activeClass : inactiveClass}
+          `}
+        >
+          <Code2 size={20} />
+          <span>Developer</span>
         </NavLink>
       </div>
     </aside>

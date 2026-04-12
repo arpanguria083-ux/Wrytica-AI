@@ -4,7 +4,7 @@ import { LLMConfig, ParaphraseMode, ParaphraseOption, ParaphraseResponse, Paraph
 
 // Abstract Chat Interface
 export interface AISession {
-  sendMessage(text: string, contextInfo?: string, onToken?: (token: string) => void): Promise<string>;
+  sendMessage(text: string, contextInfo?: string, onToken?: (token: string) => void, images?: string[]): Promise<string>;
 }
 
 class LocalChatSession implements AISession {
@@ -38,19 +38,28 @@ class LocalChatSession implements AISession {
     return truncated;
   }
 
-  async sendMessage(text: string, contextInfo?: string, onToken?: (token: string) => void): Promise<string> {
+  async sendMessage(text: string, contextInfo?: string, onToken?: (token: string) => void, images?: string[]): Promise<string> {
     const messageText = contextInfo ? `${contextInfo}\n\n${text}` : text;
     const truncatedHistory = this.truncateHistory();
+    
+    // Filter history to ensure it starts with a 'user' message for API compatibility
+    // Some models (like Qwen) fail if the first message is from the assistant
+    let firstUserIdx = truncatedHistory.findIndex(m => m.role === 'user');
+    const filteredHistory = firstUserIdx !== -1 ? truncatedHistory.slice(firstUserIdx) : [];
+    
     // Convert history messages to use 'assistant' role instead of 'model'
-    const apiHistory = truncatedHistory.map(this.convertRoleForApi);
+    const apiHistory = filteredHistory.map(this.convertRoleForApi);
     
     let response = '';
     if (onToken) {
       // Use streaming if callback provided
-      response = await this.service.chatStream(apiHistory, messageText, onToken, this.language, this.enhancement);
+      response = await this.service.chatStream(apiHistory, messageText, onToken, this.language, this.enhancement, images);
     } else {
-      response = await this.service.chat(apiHistory, messageText, this.language, this.enhancement);
+      response = await this.service.chat(apiHistory, messageText, this.language, this.enhancement, images);
     }
+    
+    // Sanitize response to remove thinking traces
+    response = AIService.sanitizeOutput(response);
     
     this.history.push({ role: 'user', content: text, timestamp: Date.now() });
     // Store as 'model' internally for display, but API will convert when needed
@@ -61,12 +70,26 @@ class LocalChatSession implements AISession {
 
 class GeminiChatSessionWrapper implements AISession {
   constructor(private chat: any) {}
-  async sendMessage(text: string, contextInfo?: string, onToken?: (token: string) => void): Promise<string> {
+  async sendMessage(text: string, contextInfo?: string, onToken?: (token: string) => void, images?: string[]): Promise<string> {
     const messageText = contextInfo ? `${contextInfo}\n\n${text}` : text;
     // Note: Gemini streaming is handled by the underlying chat object usually
     // If onToken is provided, we use the stream method
     if (onToken) {
-        const result = await this.chat.sendMessageStream(messageText);
+        // Gemini multi-modal streaming
+        let result;
+        if (images && images.length > 0) {
+           const parts = [
+             { text: messageText },
+             ...images.map(img => {
+               const [mime, data] = img.split(';base64,');
+               return { inlineData: { mimeType: mime.split(':')[1], data } };
+             })
+           ];
+           result = await this.chat.sendMessageStream(parts);
+        } else {
+           result = await this.chat.sendMessageStream(messageText);
+        }
+        
         let fullText = '';
         for await (const chunk of result.stream) {
             const chunkText = chunk.text();
@@ -75,7 +98,19 @@ class GeminiChatSessionWrapper implements AISession {
         }
         return fullText;
     } else {
-        const result = await this.chat.sendMessage({ message: messageText });
+        let result;
+        if (images && images.length > 0) {
+           const parts = [
+             { text: messageText },
+             ...images.map(img => {
+               const [mime, data] = img.split(';base64,');
+               return { inlineData: { mimeType: mime.split(':')[1], data } };
+             })
+           ];
+           result = await this.chat.sendMessage(parts);
+        } else {
+           result = await this.chat.sendMessage({ message: messageText });
+        }
         return result.text;
     }
   }
@@ -250,11 +285,18 @@ export const AIService = {
       /Step \d+:?\s*/gi,
       /Rationale:?\s*/gi,
       /Reasoning:?\s*/gi,
-      /Thinking Process:?[\s\S]*?(?=\n\n|\n\s*\n|{)/gi,
-      /Thought Process:?[\s\S]*?(?=\n\n|\n\s*\n|{)/gi,
+      /Thinking Process:?[\s\S]*?(?=\n\n|\n\s*\n|{|\d+\. \*\*|```)/gi,
+      /Thought Process:?[\s\S]*?(?=\n\n|\n\s*\n|{|\d+\. \*\*|```)/gi,
       /<\|thinking\|>[\s\S]*?<\|end_thinking\|>/gi,
       /<think>[\s\S]*?<\/think>/gi,
-      /<think>[\s\S]*?(?={)/gi
+      /<think>[\s\S]*?(?={)/gi,
+      /^\d+\. \*\*Analyze the (?:Request|Input Text|Input):\*\*[\s\S]*?(?=\n\n|\n\s*\n|$|```|{)/gim,
+      /^\d+\. \*\*Determine .*? Strategy:\*\*[\s\S]*?(?=\n\n|\n\s*\n|$|```|{)/gim,
+      /^\d+\. \*\*Drafting the Content .*?:\*\*[\s\S]*?(?=\n\n|\n\s*\n|$|```|{)/gim,
+      /^\d+\. \*\*Refining .*?:\*\*[\s\S]*?(?=\n\n|\n\s*\n|$|```|{)/gim,
+      /^\*Draft:\*[\s\S]*?(?=\n\n|\n\s*\n|$|```|{)/gim,
+      /^Thinking Process:[\s\S]*?(?=\*|```|{)/gi,
+      /^Thinking Process:[\s\S]*?(?=\n\n|```|{)/gi
     ];
     
     thinkPatterns.forEach(pattern => {
@@ -307,25 +349,36 @@ export const AIService = {
   },
 
   async summarize(config: LLMConfig, text: string, length: SummaryLength, format: SummaryFormat, language: string, enhancement?: ContextEnhancement): Promise<string> {
+    let result = '';
     if (config.provider === 'gemini') {
       if (!config.apiKey || config.apiKey.trim() === '') {
         throw new Error('Gemini API key is required. Please enter your API key in Settings.');
       }
-      return GeminiService.summarize(config, text, length, format, language, enhancement);
+      result = await GeminiService.summarize(config, text, length, format, language, enhancement);
     } else {
-      return new LocalLlmService(config).summarize(text, length, format, language, enhancement);
+      result = await new LocalLlmService(config).summarize(text, length, format, language, enhancement);
     }
+    return this.sanitizeOutput(result);
   },
 
   async generateCitation(config: LLMConfig, source: string, style: CitationStyle, language: string, enhancement?: ContextEnhancement): Promise<CitationResponse> {
-    if (config.provider === 'gemini') {
-      if (!config.apiKey || config.apiKey.trim() === '') {
-        throw new Error('Gemini API key is required. Please enter your API key in Settings.');
+    const CITATION_TIMEOUT_MS = 45000;
+    const citationPromise = (async () => {
+      if (config.provider === 'gemini') {
+        if (!config.apiKey || config.apiKey.trim() === '') {
+          throw new Error('Gemini API key is required. Please enter your API key in Settings.');
+        }
+        return GeminiService.generateCitation(config, source, style, language, enhancement);
+      } else {
+        return new LocalLlmService(config).generateCitation(source, style, language, enhancement);
       }
-      return GeminiService.generateCitation(config, source, style, language, enhancement);
-    } else {
-      return new LocalLlmService(config).generateCitation(source, style, language, enhancement);
-    }
+    })();
+
+    const timeoutPromise = new Promise<CitationResponse>((_, reject) =>
+      setTimeout(() => reject(new Error('Citation generation timed out. Using deterministic fallback.')), CITATION_TIMEOUT_MS)
+    );
+
+    return Promise.race([citationPromise, timeoutPromise]);
   },
   async reasonOverPageIndex(config: LLMConfig, query: string, nodes: PageIndexPromptNode[], language: string, enhancement?: ContextEnhancement, limit = 3) {
     if (!query.trim() || nodes.length === 0) return { nodes: [] };

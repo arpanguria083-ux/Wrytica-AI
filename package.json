@@ -10,27 +10,41 @@
     "build:clean": "rmdir /s /q dist 2>nul || rm -rf dist && npm run build",
     "build:preview": "npm run build && npm run preview",
     "install:build": "npm install && npm run build",
+    "setup": "npm install && npm run backend:setup",
+    "backend:setup": "powershell -ExecutionPolicy Bypass -File scripts/enable-deep-extract.ps1 -SetupOnly",
+    "backend:start": "powershell -ExecutionPolicy Bypass -File scripts/start-backend.ps1",
+    "deep-extract:enable": "powershell -ExecutionPolicy Bypass -File scripts/enable-deep-extract.ps1",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
+    "@tiptap/extension-link": "^3.22.3",
+    "@tiptap/extension-placeholder": "^3.22.3",
+    "@tiptap/extension-underline": "^3.22.3",
+    "@tiptap/pm": "^3.22.3",
+    "@tiptap/react": "^3.22.3",
+    "@tiptap/starter-kit": "^3.22.3",
     "idb": "^8.0.3",
     "lucide-react": "^0.554.0",
-    "pdfjs-dist": "^3.7.107",
+    "pdfjs-dist": "^4.9.155",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
-    "react-quill-new": "^3.8.3",
     "react-router-dom": "^7.9.6",
+    "react-window": "^1.8.10",
     "remark-gfm": "^4.0.1",
     "tesseract.js": "^4.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.9",
+    "tailwindcss": "^3.4.19",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
-    "vitest": "^2.0.0"
+    "vitest": "^4.1.4"
   }
 }

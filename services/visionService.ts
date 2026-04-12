@@ -5,6 +5,31 @@ const buildVisionPrompt = (language: string, fileName: string) => {
   return `You are a meticulous OCR assistant. A scanned document named "${fileName}" is provided as an image. Describe any and all readable text in ${language} only, no extra commentary.`;
 };
 
+const checkVisionCapability = async (config: LLMConfig): Promise<boolean> => {
+  try {
+    if (config.provider === 'ollama') {
+      // Check if Ollama model supports vision
+      const response = await fetch(`${config.baseUrl}/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: config.modelName })
+      });
+      if (response.ok) {
+        const modelInfo = await response.json();
+        return modelInfo.details?.support_vision === true || (modelInfo as any).projector_info !== undefined;
+      }
+    } else {
+      // For LM Studio, check if model has vision in name or try a test call
+      return config.modelName.toLowerCase().includes('vision') || 
+             config.modelName.toLowerCase().includes('llava') ||
+             config.modelName.toLowerCase().includes('multimodal');
+    }
+  } catch (error) {
+    console.warn('Could not verify vision capability:', error);
+  }
+  return false; // Assume no vision if we can't verify
+};
+
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -19,6 +44,52 @@ const fileToBase64 = (file: File): Promise<string> => {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+};
+
+const resizeImageIfNeeded = async (file: File): Promise<string> => {
+  if (file.size > 5 * 1024 * 1024) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        const maxSize = Math.sqrt(1920 * 1080);
+        let { width, height } = img;
+
+        if (width > maxSize || height > maxSize) {
+          const ratio = Math.min(maxSize / width, maxSize / height);
+          width *= ratio;
+          height *= ratio;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        ctx?.drawImage(img, 0, 0, width, height);
+
+        const resizedBase64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        canvas.width = 0;
+        canvas.height = 0;
+        URL.revokeObjectURL(objectUrl);
+        resolve(resizedBase64);
+      };
+
+      img.onerror = (err) => {
+        URL.revokeObjectURL(objectUrl);
+        reject(err);
+      };
+
+      img.src = objectUrl;
+    });
+  }
+
+  return fileToBase64(file);
 };
 
 const tryLocalVisionEndpoint = async (config: LLMConfig, dataUrl: string, prompt: string): Promise<string> => {
@@ -99,7 +170,13 @@ const tryOpenAiCompatVision = async (config: LLMConfig, dataUrl: string, prompt:
 
 export const VisionService = {
   async extractText(file: File, config: LLMConfig, language: string): Promise<string> {
-    const base64 = await fileToBase64(file);
+    // Check if the model supports vision before attempting
+    const hasVision = await checkVisionCapability(config);
+    if (!hasVision && config.provider !== 'gemini') {
+      throw new Error(`Model ${config.modelName} does not appear to support vision capabilities. Please use a vision-capable model like LLaVA or use Gemini.`);
+    }
+
+    const base64 = await resizeImageIfNeeded(file);
     const mimeType = file.type || 'image/png';
     if (config.provider === 'gemini') {
       if (!config.apiKey || !config.apiKey.trim()) {
@@ -137,7 +214,7 @@ export const VisionService = {
         }
       ];
       const resp = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-2.0-flash',
         contents,
         config: { temperature: 0.2, maxOutputTokens: 1024 }
       });

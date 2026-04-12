@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Frontend-Backend Connection Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .card { background: white; padding: 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .checking { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .logs { background: #1e1e1e; color: #fff; padding: 15px; border-radius: 4px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; }
+        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin: 5px; }
+        button:hover { background: #0056b3; }
+        .file-input { margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔗 Frontend-Backend Integration Test</h1>
+        
+        <div class="card">
+            <h3>Backend Status</h3>
+            <div id="backend-status" class="status checking">Checking...</div>
+            <button onclick="checkBackend()">Check Backend</button>
+        </div>
+        
+        <div class="card">
+            <h3>File Upload Test</h3>
+            <div class="file-input">
+                <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.pptx,.txt">
+                <button onclick="testFileUpload()">Test Upload to Backend</button>
+            </div>
+            <div id="upload-result" class="status"></div>
+        </div>
+        
+        <div class="card">
+            <h3>Real-time Logs</h3>
+            <div id="logs" class="logs">Connecting to backend...</div>
+        </div>
+    </div>
+
+    <script>
+        const logs = document.getElementById('logs');
+        const backendStatus = document.getElementById('backend-status');
+        const uploadResult = document.getElementById('upload-result');
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${message}`;
+            logs.innerHTML += logEntry + '\n';
+            logs.scrollTop = logs.scrollHeight;
+            console.log(message);
+        }
+        
+        async function checkBackend() {
+            backendStatus.className = 'status checking';
+            backendStatus.textContent = 'Checking backend...';
+            log('🔍 Checking backend connection...');
+            
+            try {
+                const response = await fetch('http://localhost:8000/health');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    backendStatus.className = 'status success';
+                    backendStatus.innerHTML = `
+                        ✅ <strong>Backend Connected</strong><br>
+                        Status: ${data.status}<br>
+                        Version: ${data.version}<br>
+                        PDF: ${data.features.pdf_processing ? '✅' : '❌'} | 
+                        Office: ${data.features.office_processing ? '✅' : '❌'} | 
+                        Embeddings: ${data.features.embeddings ? '✅' : '❌'}
+                    `;
+                    log('✅ Backend connection successful');
+                    log(`   Status: ${data.status}`);
+                    log(`   Version: ${data.version}`);
+                    log(`   Features: PDF=${data.features.pdf_processing}, Office=${data.features.office_processing}, Embeddings=${data.features.embeddings}`);
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                backendStatus.className = 'status error';
+                backendStatus.textContent = `❌ Backend Offline: ${error.message}`;
+                log(`❌ Backend connection failed: ${error.message}`);
+            }
+        }
+        
+        async function testFileUpload() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Please select a file first');
+                return;
+            }
+            
+            uploadResult.className = 'status checking';
+            uploadResult.textContent = 'Uploading to backend...';
+            log(`📁 Uploading file: ${file.name} (${(file.size/1024/1024).toFixed(1)}MB)`);
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const response = await fetch('http://localhost:8000/api/documents/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    uploadResult.className = 'status success';
+                    uploadResult.innerHTML = `
+                        ✅ <strong>Upload Successful</strong><br>
+                        Chunks: ${data.total_chunks}<br>
+                        Processing Time: ${data.processing_time_ms}ms
+                    `;
+                    log(`✅ File processed successfully`);
+                    log(`   Chunks created: ${data.total_chunks}`);
+                    log(`   Processing time: ${data.processing_time_ms}ms`);
+                } else {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+            } catch (error) {
+                uploadResult.className = 'status error';
+                uploadResult.textContent = `❌ Upload Failed: ${error.message}`;
+                log(`❌ File upload failed: ${error.message}`);
+            }
+        }
+        
+        // Auto-check on load
+        window.onload = () => {
+            log('🚀 Frontend-Backend Test Loaded');
+            checkBackend();
+            
+            // Set up periodic checks
+            setInterval(checkBackend, 30000); // Check every 30 seconds
+        };
+    </script>
+</body>
+</html>

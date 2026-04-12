@@ -1,5 +1,9 @@
+/* Tailwind CSS — generated locally by PostCSS (replaces CDN script) */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* Wrytica AI Styles */
-/* Note: Using CDN Tailwind, so no @import needed */
 
 /* Custom scrollbar styles */
 .custom-scrollbar::-webkit-scrollbar {
@@ -105,6 +109,81 @@
 .duration-500 {
   animation-duration: 0.5s;
 }
+
+/* ─── TipTap / RichEditor styles ─────────────────────────────────────────── */
+
+/* Make the ProseMirror content area fill its parent and scroll properly */
+.rich-editor-body .tiptap.ProseMirror {
+  min-height: 220px;
+  padding: 1rem 1.25rem;
+  outline: none;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: #1e293b;
+}
+
+.dark .rich-editor-body .tiptap.ProseMirror {
+  color: #e2e8f0;
+}
+
+/* Placeholder */
+.rich-editor-body .tiptap.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #94a3b8;
+  pointer-events: none;
+  height: 0;
+}
+
+/* Typography inside the editor */
+.rich-editor-body .tiptap h1 { font-size: 1.5rem; font-weight: 700; margin: 0.75rem 0 0.4rem; }
+.rich-editor-body .tiptap h2 { font-size: 1.25rem; font-weight: 600; margin: 0.65rem 0 0.35rem; }
+.rich-editor-body .tiptap h3 { font-size: 1.1rem;  font-weight: 600; margin: 0.5rem 0 0.3rem; }
+.rich-editor-body .tiptap p  { margin-bottom: 0.5rem; }
+.rich-editor-body .tiptap p:last-child { margin-bottom: 0; }
+
+.rich-editor-body .tiptap ul { list-style: disc;    padding-left: 1.4rem; margin-bottom: 0.5rem; }
+.rich-editor-body .tiptap ol { list-style: decimal; padding-left: 1.4rem; margin-bottom: 0.5rem; }
+.rich-editor-body .tiptap li { margin-bottom: 0.2rem; }
+
+.rich-editor-body .tiptap blockquote {
+  border-left: 3px solid #cbd5e1;
+  padding-left: 0.85rem;
+  color: #64748b;
+  font-style: italic;
+  margin: 0.5rem 0;
+}
+.dark .rich-editor-body .tiptap blockquote {
+  border-left-color: #475569;
+  color: #94a3b8;
+}
+
+.rich-editor-body .tiptap code {
+  background: rgba(0,0,0,0.06);
+  border-radius: 3px;
+  padding: 0.15em 0.35em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875em;
+}
+.dark .rich-editor-body .tiptap code { background: rgba(255,255,255,0.08); }
+
+.rich-editor-body .tiptap pre {
+  background: #1e293b;
+  color: #f8fafc;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.rich-editor-body .tiptap pre code { background: none; padding: 0; color: inherit; }
+
+.rich-editor-body .tiptap a { color: #6366f1; text-decoration: underline; }
+.rich-editor-body .tiptap strong { font-weight: 700; }
+.rich-editor-body .tiptap em { font-style: italic; }
+.rich-editor-body .tiptap s  { text-decoration: line-through; }
+.rich-editor-body .tiptap u  { text-decoration: underline; }
+
+/* ─────────────────────────────────────────────────────────────────────────── */
 
 /* Markdown Content Styling */
 .markdown-content {

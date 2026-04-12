@@ -14,6 +14,11 @@ const MAX_VECTOR_ENTRIES = 10000; // Limit to prevent unbounded growth
 const tokenize = (text: string): string[] =>
   text.toLowerCase().split(/\W+/).filter(t => t && !STOP_WORDS.has(t)).slice(0, 512);
 
+// Vector rebuild queue and debouncing
+let rebuildQueue: KnowledgeDocument[] = [];
+let rebuildTimer: NodeJS.Timeout | null = null;
+let isRebuilding = false;
+
 const hashToken = (token: string): number => {
   let hash = 0;
   for (let i = 0; i < token.length; i++) {
@@ -23,16 +28,20 @@ const hashToken = (token: string): number => {
 };
 
 const embed = (text: string): Float32Array => {
+  const tokens = tokenize(text || '');
   const vec = new Float32Array(DIM);
-  const tokens = tokenize(text);
-  if (!tokens.length) return vec;
-  tokens.forEach(token => {
-    vec[hashToken(token) % DIM] += 1;
-  });
-  // L2 normalize
-  let norm = 0;
-  for (let i = 0; i < DIM; i++) norm += vec[i] * vec[i];
-  norm = Math.sqrt(norm) || 1;
+  // Process tokens in chunks to prevent blocking
+  const chunkSize = 50;
+  for (let i = 0; i < tokens.length; i += chunkSize) {
+    const chunk = tokens.slice(i, i + chunkSize);
+    chunk.forEach((token, idx) => {
+      const h = hashToken(token);
+      const index = (i + idx) % DIM;
+      vec[index] += Math.sin(h) + Math.cos(h * 1.5);
+    });
+  }
+  // Normalize
+  const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0)) || 1;
   for (let i = 0; i < DIM; i++) vec[i] /= norm;
   return vec;
 };
@@ -59,25 +68,93 @@ const buildEntriesForDoc = (doc: KnowledgeDocument): VectorEntry[] => {
 export const VectorStoreService = {
   async clear() {
     store = [];
+    rebuildQueue = [];
+    if (rebuildTimer) {
+      clearTimeout(rebuildTimer);
+      rebuildTimer = null;
+    }
+    isRebuilding = false;
     await StorageService.clear('vectorStore');
+  },
+
+  // Schedule rebuild instead of immediate execution
+  scheduleRebuild(docs: KnowledgeDocument[], delay = 5000): void {
+    // Add to queue
+    rebuildQueue.push(...docs);
+    
+    // Clear existing timer
+    if (rebuildTimer) {
+      clearTimeout(rebuildTimer);
+    }
+    
+    // Schedule new rebuild
+    rebuildTimer = setTimeout(() => {
+      this.executeRebuild();
+    }, delay);
+  },
+
+  // Execute the actual rebuild
+  async executeRebuild(): Promise<void> {
+    if (isRebuilding || rebuildQueue.length === 0) return;
+    
+    isRebuilding = true;
+    const docsToProcess = rebuildQueue.splice(0); // Clear queue
+    rebuildTimer = null;
+    
+    try {
+      await this.rebuild(docsToProcess);
+    } catch (error) {
+      console.error('Vector rebuild failed:', error);
+    } finally {
+      isRebuilding = false;
+    }
+  },
+
+  // Cancel pending rebuild
+  cancelPendingRebuild(): void {
+    if (rebuildTimer) {
+      clearTimeout(rebuildTimer);
+      rebuildTimer = null;
+    }
+    rebuildQueue = [];
   },
 
   async rebuild(docs: KnowledgeDocument[]) {
     const entries: VectorEntry[] = [];
-    const batchSize = 10;
+    const batchSize = 25; // Reduced from 50 for better responsiveness
     
     for (let i = 0; i < docs.length; i += batchSize) {
       const batch = docs.slice(i, i + batchSize);
-      batch.forEach(doc => entries.push(...buildEntriesForDoc(doc)));
+      
+      // Build entries for this batch
+      batch.forEach(doc => {
+        const docEntries = buildEntriesForDoc(doc);
+        entries.push(...docEntries);
+      });
+      
       // Yield to UI thread every batch
       await new Promise(r => setTimeout(r, 0));
+      
+      // Check if we should stop (memory protection)
+      if (entries.length > MAX_VECTOR_ENTRIES) {
+        console.warn(`Vector store limit reached: ${entries.length} entries`);
+        break;
+      }
     }
     
-    store = entries;
-    // Persist in background
-    StorageService.clear('vectorStore').then(() => {
-      StorageService.bulkPut('vectorStore', entries);
-    });
+    store = entries.slice(0, MAX_VECTOR_ENTRIES);
+    
+    // Persist in background without blocking - use setImmediate equivalent
+    setTimeout(() => {
+      StorageService.clear('vectorStore').then(() => {
+        // Store in small chunks to prevent blocking
+        const storageBatchSize = 100;
+        for (let i = 0; i < entries.length; i += storageBatchSize) {
+          const batch = entries.slice(i, i + storageBatchSize);
+          StorageService.bulkPut('vectorStore', batch);
+        }
+      });
+    }, 100);
   },
 
 

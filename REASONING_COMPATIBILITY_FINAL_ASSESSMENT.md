@@ -34,12 +34,12 @@
 
 #### **Current Model Usage:**
 ```typescript
-const MODEL_FAST = 'gemini-2.5-flash';        // ✅ Reasoning-capable
-const MODEL_REASONING = 'gemini-2.5-flash';   // ✅ Same model for both
+const MODEL_FAST = 'gemini-2.0-flash';        // ✅ Reasoning-capable
+const MODEL_REASONING = 'gemini-2.0-flash';   // ✅ Same model for both
 ```
 
 #### **Reasoning Model Support:**
-- ✅ **Gemini 2.5 Flash**: Supports chain-of-thought reasoning
+- ✅ **Gemini 2.0 Flash**: Supports chain-of-thought reasoning
 - ✅ **Local Models**: Many support enhanced prompting
 - ⚠️ **Not Leveraged**: Current prompts don't use reasoning features
 
@@ -96,7 +96,7 @@ const MODEL_REASONING = 'gemini-2.5-flash';   // ✅ Same model for both
 ### **Phase 1: Quick Wins (This Week)**
 1. **Add Reasoning Steps** to existing prompts
 2. **Maintain JSON Output** compatibility
-3. **Test with Current Models** (Gemini 2.5 Flash)
+3. **Test with Current Models** (Gemini 2.0 Flash)
 
 ### **Phase 2: Model Detection (Next Week)**
 1. **Detect Model Capabilities** automatically

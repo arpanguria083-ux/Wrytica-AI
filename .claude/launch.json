@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Wrytica Frontend (Vite)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5180
+    },
+    {
+      "name": "Wrytica Backend (FastAPI)",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["backend/main.py"],
+      "port": 8000
+    },
+    {
+      "name": "Vite Preview (built dist)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview"],
+      "port": 4173
+    }
+  ]
+}

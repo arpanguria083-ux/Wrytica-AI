@@ -32,21 +32,27 @@ npm install
 npm run build
 ```
 
+If you are in PowerShell and want to avoid script execution policy issues, use the Windows wrappers:
+```powershell
+.\setup.ps1
+.\build.ps1
+```
+
 ## 🔧 Manual Build Steps
 
 ### 1. Install Dependencies
 ```bash
-npm install
+npm.cmd install
 ```
 
 ### 2. Build for Production
 ```bash
-npm run build
+npm.cmd run build
 ```
 
 ### 3. Preview Build Locally
 ```bash
-npm run preview
+npm.cmd run preview
 ```
 
 The preview server will start at `http://localhost:4173`
@@ -86,7 +92,7 @@ netlify deploy --prod --dir=dist
 ```
 
 ### Deploy to GitHub Pages
-1. Build the project: `npm run build`
+1. Build the project: `npm.cmd run build`
 2. Push the `dist` folder to `gh-pages` branch
 3. Enable GitHub Pages in repository settings
 
@@ -102,17 +108,17 @@ Simply upload the contents of the `dist/` folder to your hosting service:
 
 ### Clean Build (Remove old build first)
 ```bash
-npm run build:clean
+npm.cmd run build:clean
 ```
 
 ### Build and Preview
 ```bash
-npm run build:preview
+npm.cmd run build:preview
 ```
 
 ### Development Mode (Hot Reload)
 ```bash
-npm run dev
+npm.cmd run dev
 ```
 
 ## 🔍 Troubleshooting

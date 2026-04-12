@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Settings Page Inspector</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
+        .error { background: #fee; border: 1px solid #fcc; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .info { background: #e3f2fd; border: 1px solid #bbdefb; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        button { padding: 10px 20px; margin: 10px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        button:hover { background: #0056b3; }
+        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #f2f2f2; }
+        .code { background: #f8f9fa; padding: 10px; border-radius: 4px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Settings Page Inspector</h1>
+        <p>This page checks for errors and validates placeholder values in the Settings page.</p>
+        
+        <button onclick="checkLocalStorage()">📊 Check LocalStorage</button>
+        <button onclick="checkDefaultConfigs()">⚙️ Check Default Configs</button>
+        <button onclick="testConnections()">🔌 Test Connections</button>
+        <button onclick="validatePlaceholders()">✅ Validate Placeholders</button>
+        <button onclick="clearAll()">🗑️ Clear All Data</button>
+        
+        <div id="results"></div>
+    </div>
+
+    <script>
+        // Import default configs (simulated)
+        const DEFAULT_CONFIGS = {
+            gemini: {
+                provider: 'gemini',
+                modelName: 'gemini-2.0-flash',
+                baseUrl: '',
+                contextLimit: 1000000,
+                maxCompletionTokens: 8192,
+                apiKey: ''
+            },
+            ollama: {
+                provider: 'ollama',
+                modelName: 'llama3',
+                baseUrl: 'http://localhost:11434',
+                contextLimit: 8192,
+                maxCompletionTokens: 4096
+            },
+            lmstudio: {
+                provider: 'lmstudio',
+                modelName: 'microsoft/phi-4-mini-reasoning',
+                baseUrl: 'http://localhost:1234',
+                contextLimit: 4096,
+                maxCompletionTokens: 2048
+            }
+        };
+
+        const DEFAULT_INGESTION_CONFIG = {
+            maxFileSizeMB: 20,
+            maxPdfPages: 50,
+            batchSize: 20,
+            memoryThresholdMB: 400,
+            maxStoredContentLength: 50000
+        };
+
+        function checkLocalStorage() {
+            console.log('Checking LocalStorage...');
+            let html = '<h2>📊 LocalStorage Contents</h2>';
+            
+            try {
+                // Check provider configs
+                const providerConfigs = localStorage.getItem('wrytica_provider_configs');
+                if (providerConfigs) {
+                    const configs = JSON.parse(providerConfigs);
+                    html += '<h3>Provider Configs:</h3><table><tr><th>Provider</th><th>Model</th><th>Base URL</th><th>Context</th><th>Max Tokens</th><th>Issues</th></tr>';
+                    
+                    for (const [provider, config] of Object.entries(configs)) {
+                        const issues = [];
+                        
+                        // Check for issues
+                        if (!config.modelName) issues.push('Missing model name');
+                        if (provider !== 'gemini' && !config.baseUrl) issues.push('Missing base URL');
+                        if (provider === 'gemini' && !config.apiKey) issues.push('Missing API key');
+                        if (config.contextLimit && config.maxCompletionTokens && config.maxCompletionTokens >= config.contextLimit) {
+                            issues.push('Max tokens >= Context limit');
+                        }
+                        
+                        html += `<tr>
+                            <td>${provider}</td>
+                            <td>${config.modelName || 'MISSING'}</td>
+                            <td>${config.baseUrl || 'N/A'}</td>
+                            <td>${config.contextLimit || 'MISSING'}</td>
+                            <td>${config.maxCompletionTokens || 'MISSING'}</td>
+                            <td>${issues.length ? issues.join(', ') : '✅ OK'}</td>
+                        </tr>`;
+                    }
+                    html += '</table>';
+                } else {
+                    html += '<div class="warning">No provider configs found in LocalStorage</div>';
+                }
+
+                // Check ingestion config
+                const ingestionConfig = localStorage.getItem('wrytica_ingestion_config');
+                if (ingestionConfig) {
+                    const config = JSON.parse(ingestionConfig);
+                    html += '<h3>Ingestion Config:</h3><table><tr><th>Setting</th><th>Value</th><th>Default</th><th>Issues</th></tr>';
+                    
+                    for (const [key, value] of Object.entries(config)) {
+                        const defaultValue = DEFAULT_INGESTION_CONFIG[key];
+                        const issues = [];
+                        
+                        if (key.includes('MB') && (value < 1 || value > 1000)) {
+                            issues.push('Value out of range (1-1000)');
+                        }
+                        if (key.includes('Pages') && (value < 1 || value > 1000)) {
+                            issues.push('Value out of range (1-1000)');
+                        }
+                        if (key.includes('Length') && (value < 1000 || value > 100000)) {
+                            issues.push('Value out of range (1000-100000)');
+                        }
+                        
+                        html += `<tr>
+                            <td>${key}</td>
+                            <td>${value}</td>
+                            <td>${defaultValue}</td>
+                            <td>${issues.length ? issues.join(', ') : '✅ OK'}</td>
+                        </tr>`;
+                    }
+                    html += '</table>';
+                } else {
+                    html += '<div class="warning">No ingestion config found in LocalStorage</div>';
+                }
+
+            } catch (error) {
+                html += `<div class="error">Error reading LocalStorage: ${error.message}</div>`;
+            }
+            
+            document.getElementById('results').innerHTML = html;
+        }
+
+        function checkDefaultConfigs() {
+            console.log('Checking default configs...');
+            let html = '<h2>⚙️ Default Configs Validation</h2>';
+            
+            html += '<h3>Provider Configs:</h3><table><tr><th>Provider</th><th>Model</th><th>Base URL</th><th>Context</th><th>Max Tokens</th><th>Issues</th></tr>';
+            
+            for (const [provider, config] of Object.entries(DEFAULT_CONFIGS)) {
+                const issues = [];
+                
+                // Check for placeholder issues
+                if (config.modelName === 'llama3') {
+                    issues.push('Generic model name - should be specific version');
+                }
+                if (config.modelName === 'microsoft/phi-4-mini-reasoning') {
+                    issues.push('Very specific model - may not be available');
+                }
+                if (provider === 'gemini' && !config.apiKey) {
+                    issues.push('API key required but empty');
+                }
+                if (config.contextLimit && config.maxCompletionTokens && config.maxCompletionTokens >= config.contextLimit) {
+                    issues.push('Max tokens >= Context limit');
+                }
+                
+                html += `<tr>
+                    <td>${provider}</td>
+                    <td>${config.modelName}</td>
+                    <td>${config.baseUrl || 'N/A'}</td>
+                    <td>${config.contextLimit}</td>
+                    <td>${config.maxCompletionTokens}</td>
+                    <td>${issues.length ? issues.join(', ') : '✅ OK'}</td>
+                </tr>`;
+            }
+            html += '</table>';
+            
+            document.getElementById('results').innerHTML = html;
+        }
+
+        async function testConnections() {
+            console.log('Testing connections...');
+            let html = '<h2>🔌 Connection Tests</h2>';
+            
+            // Test Ollama
+            try {
+                const ollamaResponse = await fetch('http://localhost:11434/api/tags', { timeout: 5000 });
+                if (ollamaResponse.ok) {
+                    const data = await ollamaResponse.json();
+                    html += `<div class="success">✅ Ollama connected - ${data.models?.length || 0} models available</div>`;
+                } else {
+                    html += '<div class="warning">⚠️ Ollama responded but not OK</div>';
+                }
+            } catch (error) {
+                html += '<div class="error">❌ Ollama not available</div>';
+            }
+            
+            // Test LM Studio
+            try {
+                const lmResponse = await fetch('http://localhost:1234/v1/models', { timeout: 5000 });
+                if (lmResponse.ok) {
+                    const data = await lmResponse.json();
+                    html += `<div class="success">✅ LM Studio connected - ${data.data?.length || 0} models available</div>`;
+                } else {
+                    html += '<div class="warning">⚠️ LM Studio responded but not OK</div>';
+                }
+            } catch (error) {
+                html += '<div class="error">❌ LM Studio not available</div>';
+            }
+            
+            // Test Backend
+            try {
+                const backendResponse = await fetch('http://localhost:8000/api/health', { timeout: 5000 });
+                if (backendResponse.ok) {
+                    html += '<div class="success">✅ Backend connected</div>';
+                } else {
+                    html += '<div class="warning">⚠️ Backend responded but not OK</div>';
+                }
+            } catch (error) {
+                html += '<div class="error">❌ Backend not available</div>';
+            }
+            
+            document.getElementById('results').innerHTML = html;
+        }
+
+        function validatePlaceholders() {
+            console.log('Validating placeholders...');
+            let html = '<h2>✅ Placeholder Validation</h2>';
+            
+            const issues = [];
+            
+            // Check model names
+            if (DEFAULT_CONFIGS.ollama.modelName === 'llama3') {
+                issues.push({
+                    type: 'warning',
+                    message: 'Ollama model name "llama3" is generic - should specify version like "llama3:8b"'
+                });
+            }
+            
+            if (DEFAULT_CONFIGS.lmstudio.modelName === 'microsoft/phi-4-mini-reasoning') {
+                issues.push({
+                    type: 'info',
+                    message: 'LM Studio model name is very specific - user may not have this model'
+                });
+            }
+            
+            // Check Gemini model
+            if (DEFAULT_CONFIGS.gemini.modelName === 'gemini-2.0-flash') {
+                issues.push({
+                    type: 'success',
+                    message: 'Gemini model name is current and valid'
+                });
+            }
+            
+            // Check ingestion defaults
+            if (DEFAULT_INGESTION_CONFIG.maxFileSizeMB === 20) {
+                issues.push({
+                    type: 'info',
+                    message: 'Max file size 20MB is reasonable for most use cases'
+                });
+            }
+            
+            if (DEFAULT_INGESTION_CONFIG.maxPdfPages === 50) {
+                issues.push({
+                    type: 'info',
+                    message: 'Max PDF pages 50 is good for performance'
+                });
+            }
+            
+            if (DEFAULT_INGESTION_CONFIG.batchSize === 20) {
+                issues.push({
+                    type: 'warning',
+                    message: 'Batch size 20 may be too large - consider 5-10 for better performance'
+                });
+            }
+            
+            // Display issues
+            issues.forEach(issue => {
+                const className = issue.type === 'error' ? 'error' : 
+                               issue.type === 'warning' ? 'warning' : 
+                               issue.type === 'success' ? 'success' : 'info';
+                html += `<div class="${className}">${issue.message}</div>`;
+            });
+            
+            document.getElementById('results').innerHTML = html;
+        }
+
+        function clearAll() {
+            if (!confirm('⚠️ This will clear ALL stored data including configurations. Continue?')) {
+                return;
+            }
+            
+            localStorage.clear();
+            sessionStorage.clear();
+            document.getElementById('results').innerHTML = '<div class="success">✅ All storage cleared</div>';
+        }
+    </script>
+</body>
+</html>

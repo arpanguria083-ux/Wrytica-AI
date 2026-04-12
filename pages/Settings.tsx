@@ -1,13 +1,37 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { useAppContext } from '../contexts/AppContext';
-import { DEFAULT_CONFIGS, LLMProvider, LLMConfig, Guardrail, generateId } from '../utils';
-import { Save, RotateCcw, Server, Shield, Globe, Activity, Check, AlertCircle, Loader2, HardDrive } from 'lucide-react';
+import { DEFAULT_CONFIGS, LLMProvider, LLMConfig, Guardrail, generateId, IngestionConfig, DEFAULT_INGESTION_CONFIG, PDF_EXTRACTION_MODE_STORAGE_KEY } from '../utils';
+import { Save, RotateCcw, Server, Shield, Globe, Activity, Check, AlertCircle, Loader2, HardDrive, FileText } from 'lucide-react';
 import { AIService } from '../services/aiService';
 import { detectHardwareProfile, getRecommendations } from '../services/hardwareAdvisor';
-import { IngestionConfig, DEFAULT_INGESTION_CONFIG, saveIngestionConfig } from './KnowledgeBase';
+import { saveIngestionConfig } from '../utils/ingestionConfig';
+import { useBackendStatus } from '../hooks/useBackendStatus';
+
+const ProcessingStatusRow: React.FC<{
+  label: string;
+  available?: boolean;
+  loading?: boolean;
+  availableText?: string;
+  unavailableText?: string;
+}> = ({ label, available, loading, availableText = 'Ready', unavailableText = 'Not available' }) => (
+  <div className="flex items-center gap-2 text-xs">
+    {loading ? (
+      <Loader2 size={12} className="animate-spin text-slate-400" />
+    ) : available ? (
+      <Check size={12} className="text-green-500" />
+    ) : (
+      <AlertCircle size={12} className="text-amber-500" />
+    )}
+    <span className="text-slate-500 dark:text-slate-400">{label}:</span>
+    <span className={available ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}>
+      {loading ? 'Checking...' : available ? availableText : unavailableText}
+    </span>
+  </div>
+);
 
 export const Settings: React.FC = () => {
   const { config, updateConfig, resetConfig, guardrails, addGuardrail, deleteGuardrail, retrievalMode, setRetrievalMode, selfImproveEnabled, setSelfImproveEnabled, hasGPU } = useAppContext();
+  const backendStatus = useBackendStatus();
   
   const [testStatus, setTestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
@@ -43,12 +67,20 @@ export const Settings: React.FC = () => {
   const [guardrailProhibited, setGuardrailProhibited] = useState('');
   const [hardwareInfo, setHardwareInfo] = useState(() => detectHardwareProfile());
   const [rec, setRec] = useState(getRecommendations(hardwareInfo.profile));
+  const deepExtractEnableCommand = 'powershell -ExecutionPolicy Bypass -File scripts/enable-deep-extract.ps1';
 
   // Ingestion configuration
   const [ingestionConfig, setIngestionConfig] = useState<IngestionConfig>(() => {
     try {
       const stored = localStorage.getItem('wrytica_ingestion_config');
-      if (stored) return { ...DEFAULT_INGESTION_CONFIG, ...JSON.parse(stored) };
+      const pdfExtractionMode = localStorage.getItem(PDF_EXTRACTION_MODE_STORAGE_KEY);
+      if (stored) {
+        const parsed = { ...DEFAULT_INGESTION_CONFIG, ...JSON.parse(stored) };
+        if (pdfExtractionMode === 'deep' || pdfExtractionMode === 'standard') {
+          parsed.pdfExtractionMode = pdfExtractionMode;
+        }
+        return parsed;
+      }
     } catch { /* use defaults */ }
     return { ...DEFAULT_INGESTION_CONFIG };
   });
@@ -212,8 +244,27 @@ export const Settings: React.FC = () => {
       <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 text-xs text-slate-600 dark:text-slate-300">
         <p className="font-semibold text-slate-800 dark:text-white text-sm mb-1">Hardware hint</p>
         <p>
-          We auto-detect GPU in the browser. If you have GPU, consider larger or vision models; otherwise stay with lite/quantized models to keep RAM under 16 GB.
+          We auto-detect GPU support in the browser. If a GPU is available, consider larger or vision-capable models; otherwise stay with lightweight quantized models to keep RAM under 16 GB.
         </p>
+      </div>
+
+      <div className="bg-white dark:bg-dark-surface rounded-2xl shadow-sm border border-slate-200 dark:border-dark-border p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white">OCR & Document Processing</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Monitor backend readiness, resource usage, and OCR job performance.</p>
+          </div>
+          <Activity size={20} className="text-slate-400" />
+        </div>
+        <div className="text-xs space-y-3 text-slate-600 dark:text-slate-300">
+          <ProcessingStatusRow label="Backend Status" available={backendStatus.available} availableText={`v${backendStatus.health?.version || '1.x'}`} />
+          <ProcessingStatusRow label="Deep Extract" available={backendStatus.health?.features.deep_extract} />
+          <ProcessingStatusRow label="Embeddings" available={backendStatus.health?.features.embeddings} />
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            OCR jobs are processed asynchronously via background queue to prevent browser blocking. Progress updates stream in real-time.
+            Monitor system resources in the job status cards during OCR processing.
+          </p>
+        </div>
       </div>
 
       <div className="bg-white dark:bg-dark-surface rounded-2xl shadow-sm border border-slate-200 dark:border-dark-border p-5 space-y-3">
@@ -245,8 +296,8 @@ export const Settings: React.FC = () => {
         </div>
         <div className="text-xs text-slate-600 dark:text-slate-300 space-y-1">
           <p>Profile: {hardwareInfo.profile} | GPU: {hardwareInfo.hasGPU ? 'Detected' : 'Not detected'} | RAM (approx): {hardwareInfo.deviceMemoryGB ? `${hardwareInfo.deviceMemoryGB} GB` : 'n/a'} | Renderer: {hardwareInfo.gpuRenderer || 'n/a'}</p>
-          <p>Suggested text model: <span className="font-semibold">{rec.textModel}</span> · Context: {rec.contextLimit.toLocaleString()} tokens</p>
-          {rec.visionModel && <p>Suggested vision model: <span className="font-semibold">{rec.visionModel}</span> · Max images: {rec.maxVisionImages}</p>}
+          <p>Suggested text model: <span className="font-semibold">{rec.textModel}</span> | Context: {rec.contextLimit.toLocaleString()} tokens</p>
+          {rec.visionModel && <p>Suggested vision model: <span className="font-semibold">{rec.visionModel}</span> | Max images: {rec.maxVisionImages}</p>}
           <p className="text-slate-500 dark:text-slate-400">{rec.notes}</p>
         </div>
       </div>
@@ -320,7 +371,7 @@ export const Settings: React.FC = () => {
                   <p>1. Visit <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">Google AI Studio</a></p>
                   <p>2. Sign in and click "Create API Key"</p>
                   <p>3. Copy and paste it here</p>
-                  <p className="mt-2 text-blue-700 dark:text-blue-300">🔒 Your API key is stored locally and never shared.</p>
+                  <p className="mt-2 text-blue-700 dark:text-blue-300">🔒 Your API key stays on this device and is never shared.</p>
                 </div>
               </div>
             </div>
@@ -350,7 +401,7 @@ export const Settings: React.FC = () => {
               className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
             />
             <p className="text-xs text-slate-400">
-              {config.provider === 'gemini' ? 'Recommended: gemini-2.5-flash' : 'Exact name of the model loaded in your local runner (e.g. llama3, mistral)'}
+              {config.provider === 'gemini' ? 'Recommended: gemini-2.0-flash' : 'Exact name of model loaded in your local runner (e.g., llama3.2:3b, mistral:7b)'}
             </p>
           </div>
 
@@ -361,10 +412,13 @@ export const Settings: React.FC = () => {
               <input 
                 type="number" 
                 value={config.contextLimit}
-                onChange={(e) => updateConfig({ contextLimit: parseInt(e.target.value) || 4096 })}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 4096;
+                  updateConfig({ contextLimit: Math.max(1024, Math.min(1000000, value)) });
+                }}
                 className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
               />
-              <p className="text-[10px] text-slate-400">Total memory (Input + Output). Llama 3 (8k): 8192, Mistral (32k): 32768.</p>
+              <p className="text-[10px] text-slate-400">Total memory (Input + Output). Range: 1,024 - 1,000,000. Llama 3.2 (8k): 8192, Mistral (32k): 32768.</p>
             </div>
             
             <div className="space-y-2">
@@ -372,10 +426,16 @@ export const Settings: React.FC = () => {
               <input 
                 type="number" 
                 value={config.maxCompletionTokens}
-                onChange={(e) => updateConfig({ maxCompletionTokens: parseInt(e.target.value) || 2048 })}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 2048;
+                  updateConfig({ maxCompletionTokens: Math.max(512, Math.min(config.contextLimit - 100, value)) });
+                }}
                 className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
               />
-              <p className="text-[10px] text-slate-400">Maximum length for a single response. Must be less than Context Window.</p>
+              <p className="text-[10px] text-slate-400">Maximum length for a single response. Range: 512 - Context Limit - 100.</p>
+              {config.maxCompletionTokens >= config.contextLimit && (
+                <p className="text-[10px] text-red-500">⚠️ Max completion should be less than context limit!</p>
+              )}
             </div>
           </div>
         </div>
@@ -487,16 +547,138 @@ export const Settings: React.FC = () => {
           </button>
         </div>
 
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-4 space-y-4">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-sm font-semibold text-slate-800 dark:text-white flex items-center gap-2">
+                <FileText size={16} className="text-blue-500" />
+                PDF Extraction Mode
+              </h4>
+              <button
+                onClick={() => backendStatus.refresh()}
+                className="px-3 py-1 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800"
+              >
+                Refresh Status
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Choose between the existing fast text path and MinerU-powered deep extraction for scanned or layout-heavy PDFs.
+            </p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="flex items-start gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-dark-surface p-4 cursor-pointer">
+              <input
+                type="radio"
+                name="pdfExtractionMode"
+                value="standard"
+                checked={ingestionConfig.pdfExtractionMode === 'standard'}
+                onChange={() => updateIngestionConfig({ pdfExtractionMode: 'standard' })}
+                className="mt-1"
+              />
+              <div>
+                <div className="text-sm font-semibold text-slate-800 dark:text-white">Standard</div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Fast extraction for digital PDFs with selectable text. Keeps the existing lightweight behavior.
+                </div>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-dark-surface p-4 cursor-pointer">
+              <input
+                type="radio"
+                name="pdfExtractionMode"
+                value="deep"
+                checked={ingestionConfig.pdfExtractionMode === 'deep'}
+                onChange={() => updateIngestionConfig({ pdfExtractionMode: 'deep' })}
+                className="mt-1"
+              />
+              <div>
+                <div className="text-sm font-semibold text-slate-800 dark:text-white">Deep Extract</div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Uses MinerU for OCR, layout, formulas, and tables. Best for scanned, academic, and complex financial PDFs.
+                </div>
+              </div>
+            </label>
+          </div>
+
+          <div className="space-y-2 border-t border-slate-200 dark:border-slate-800 pt-3">
+            <ProcessingStatusRow
+              label="Backend"
+              available={backendStatus.available}
+              loading={backendStatus.checking}
+              availableText="Connected"
+              unavailableText="Offline"
+            />
+            <ProcessingStatusRow
+              label="MinerU"
+              available={backendStatus.health?.features.deep_extract}
+              loading={backendStatus.checking}
+              availableText={
+                backendStatus.health?.features.mineru_version
+                  ? `Installed (${backendStatus.health.features.mineru_version})`
+                  : 'Installed'
+              }
+              unavailableText="Not installed"
+            />
+            <ProcessingStatusRow
+              label="GPU Mode"
+              available={backendStatus.health?.features.deep_extract_gpu}
+              loading={backendStatus.checking}
+              availableText="Available"
+              unavailableText="CPU fallback expected"
+            />
+            {backendStatus.health?.features.deep_extract_compute_reason && (
+              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                Compute reason: {backendStatus.health.features.deep_extract_compute_reason}
+              </div>
+            )}
+          </div>
+
+          {ingestionConfig.pdfExtractionMode === 'deep' && !backendStatus.available && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300 space-y-3">
+              <div>
+                Deep Extract needs the Python backend running. Until the backend is available, PDFs will continue through the standard browser flow.
+              </div>
+              <div className="rounded-lg bg-white/70 dark:bg-slate-950/40 p-3 font-mono text-[11px] break-all">
+                {deepExtractEnableCommand}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(deepExtractEnableCommand);
+                    setTestStatus('success');
+                    setTestMessage('Deep Extract setup command copied to clipboard.');
+                    setTimeout(() => setTestStatus('idle'), 3000);
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 text-[11px] font-semibold"
+                >
+                  Copy Enable Command
+                </button>
+                <button
+                  onClick={() => window.open('http://localhost:8000/health', '_blank')}
+                  className="px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 text-[11px] font-semibold"
+                >
+                  Open Health URL
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Max File Size (MB)</label>
             <input
               type="number"
               value={ingestionConfig.maxFileSizeMB}
-              onChange={(e) => updateIngestionConfig({ maxFileSizeMB: Math.max(1, parseInt(e.target.value) || 20) })}
+              onChange={(e) => updateIngestionConfig({ maxFileSizeMB: Math.max(1, Math.min(100, parseInt(e.target.value) || 20)) })}
               className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
             />
-            <p className="text-[10px] text-slate-400">Files larger than this are skipped. Default: 20 MB.</p>
+            <p className="text-[10px] text-slate-400">Files larger than this are skipped. Range: 1-100 MB. Default: 20 MB.</p>
+            {ingestionConfig.maxFileSizeMB > 50 && (
+              <p className="text-[10px] text-yellow-600">⚠️ Large file sizes may cause browser crashes</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -504,10 +686,13 @@ export const Settings: React.FC = () => {
             <input
               type="number"
               value={ingestionConfig.maxPdfPages}
-              onChange={(e) => updateIngestionConfig({ maxPdfPages: Math.max(1, parseInt(e.target.value) || 50) })}
+              onChange={(e) => updateIngestionConfig({ maxPdfPages: Math.max(1, Math.min(200, parseInt(e.target.value) || 50)) })}
               className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
             />
-            <p className="text-[10px] text-slate-400">Max pages to extract per PDF. Default: 50.</p>
+            <p className="text-[10px] text-slate-400">Max pages to extract per PDF. Range: 1-200. Default: 50.</p>
+            {ingestionConfig.maxPdfPages > 100 && (
+              <p className="text-[10px] text-yellow-600">⚠️ High page counts may cause processing delays</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -515,10 +700,13 @@ export const Settings: React.FC = () => {
             <input
               type="number"
               value={ingestionConfig.batchSize}
-              onChange={(e) => updateIngestionConfig({ batchSize: Math.max(5, parseInt(e.target.value) || 20) })}
+              onChange={(e) => updateIngestionConfig({ batchSize: Math.max(5, Math.min(50, parseInt(e.target.value) || 10)) })}
               className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
             />
-            <p className="text-[10px] text-slate-400">Files per batch before flushing to storage. Default: 20.</p>
+            <p className="text-[10px] text-slate-400">Files per batch before flushing to storage. Range: 5-50. Default: 10.</p>
+            {ingestionConfig.batchSize > 20 && (
+              <p className="text-[10px] text-yellow-600">⚠️ Large batch sizes may cause memory issues</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -526,10 +714,13 @@ export const Settings: React.FC = () => {
             <input
               type="number"
               value={ingestionConfig.memoryThresholdMB}
-              onChange={(e) => updateIngestionConfig({ memoryThresholdMB: Math.max(100, parseInt(e.target.value) || 400) })}
+              onChange={(e) => updateIngestionConfig({ memoryThresholdMB: Math.max(100, Math.min(2000, parseInt(e.target.value) || 400)) })}
               className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
             />
-            <p className="text-[10px] text-slate-400">Stop indexing when processed data exceeds this. Default: 400 MB.</p>
+            <p className="text-[10px] text-slate-400">Stop indexing when processed data exceeds this. Range: 100-2000 MB. Default: 400 MB.</p>
+            {ingestionConfig.memoryThresholdMB > 1000 && (
+              <p className="text-[10px] text-yellow-600">⚠️ High memory threshold may cause browser crashes</p>
+            )}
           </div>
 
           <div className="space-y-2 md:col-span-2">
@@ -537,10 +728,13 @@ export const Settings: React.FC = () => {
             <input
               type="number"
               value={ingestionConfig.maxStoredContentLength}
-              onChange={(e) => updateIngestionConfig({ maxStoredContentLength: Math.max(5000, parseInt(e.target.value) || 50000) })}
+              onChange={(e) => updateIngestionConfig({ maxStoredContentLength: Math.max(5000, Math.min(100000, parseInt(e.target.value) || 50000)) })}
               className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
             />
-            <p className="text-[10px] text-slate-400">Document content is truncated beyond this length to save memory. Chunks are still created from the full text. Default: 50,000 chars.</p>
+            <p className="text-[10px] text-slate-400">Document content is truncated beyond this length to save memory. Chunks are still created from the full text. Range: 5,000-100,000. Default: 50,000 chars.</p>
+            {ingestionConfig.maxStoredContentLength > 80000 && (
+              <p className="text-[10px] text-yellow-600">⚠️ High content length may increase memory usage</p>
+            )}
           </div>
         </div>
       </div>
@@ -560,3 +754,4 @@ export const Settings: React.FC = () => {
     </div>
   );
 };
+

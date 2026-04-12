@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Check, X, Wand2, History, Sparkles, ChevronDown, ChevronRight, Lightbulb, ThumbsUp, ThumbsDown, MessageSquare, AlertCircle } from 'lucide-react';
 import { AIService } from '../services/aiService';
+import { FallbackService } from '../services/fallbackService';
 import { GrammarError, generateId, buildContextEnhancement } from '../utils';
 import { useAppContext } from '../contexts/AppContext';
 
@@ -8,6 +9,7 @@ export const GrammarChecker: React.FC = () => {
   const { grammarState, setGrammarState, config, updateUsage, isOverLimit, language, guardrails, selectedGuardrailId, recordToolHistory, recordFeedback, getFeedbackHints, selfImproveEnabled, feedbackLog, addChatHistoryEntry, saveInputText, getSavedInput } = useAppContext();
   const guardrail = guardrails.find(g => g.id === selectedGuardrailId) || undefined;
   const [lastHistoryEntryId, setLastHistoryEntryId] = useState<string | null>(null);
+  const [feedbackAnimation, setFeedbackAnimation] = useState<'up' | 'down' | null>(null);
   
   // Local UI state
   // Initialize text from saved state
@@ -31,7 +33,15 @@ export const GrammarChecker: React.FC = () => {
     
     try {
       const enhancement = buildContextEnhancement(guardrail, getFeedbackHints('grammar'));
-      const result = await AIService.checkGrammar(config, grammarState.text, grammarState.historyText, language, enhancement);
+      let result;
+      try {
+        result = await AIService.checkGrammar(config, grammarState.text, grammarState.historyText, language, enhancement);
+        if (!result || !result.errors) throw new Error('AI returned empty result');
+      } catch (aiError) {
+        console.warn('AI Grammar Check failed, falling back to local analysis:', aiError);
+        result = FallbackService.checkGrammar(grammarState.text);
+      }
+
       setGrammarState(prev => ({ 
         ...prev, 
         errors: result.errors,
@@ -122,6 +132,9 @@ export const GrammarChecker: React.FC = () => {
     // Use custom comment if provided, otherwise fall back to default
     const note = feedbackComment.trim() || (rating > 0 ? 'Grammar scan was helpful' : 'Needs more contextual accuracy');
     recordFeedback('grammar', rating, note, lastHistoryEntryId);
+    // Trigger animation
+    setFeedbackAnimation(rating > 0 ? 'up' : 'down');
+    setTimeout(() => setFeedbackAnimation(null), 800); // Reset after animation
     // Reset feedback input
     setFeedbackComment('');
     setShowFeedbackInput(false);
@@ -131,11 +144,22 @@ export const GrammarChecker: React.FC = () => {
     const error = grammarState.errors.find(e => e.id === errorId);
     if (!error) return;
     
+    // Smooth transition effect
     const newText = grammarState.text.replace(error.original, error.suggestion);
     const newErrors = grammarState.errors.filter(e => e.id !== errorId);
     
     setGrammarState(prev => ({ ...prev, text: newText, errors: newErrors }));
     setFixesAppliedCount(prev => prev + 1);
+
+    // Provide a small visual toast or indicator that fix was applied
+    const toast = document.createElement('div');
+    toast.className = 'fixed bottom-10 left-1/2 -translate-x-1/2 bg-green-600 text-white px-4 py-2 rounded-full shadow-lg z-50 animate-in fade-in slide-in-from-bottom-4 duration-300';
+    toast.innerText = 'Fix Applied! ✨';
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
+      setTimeout(() => document.body.removeChild(toast), 300);
+    }, 1500);
   };
 
   const ignoreFix = (errorId: string) => {
@@ -162,6 +186,57 @@ export const GrammarChecker: React.FC = () => {
     
     setGrammarState(prev => ({ ...prev, text: newText, errors: [] }));
     setFixesAppliedCount(prev => prev + grammarState.errors.length);
+  };
+
+  // Function to render text with highlights for the overlay
+  const renderHighlightedText = () => {
+    if (!grammarState.text) return null;
+    if (grammarState.errors.length === 0) return grammarState.text;
+
+    // Sort errors by length (longest first) to avoid partial matches
+    // This is a naive approach since we don't have offsets, but better than nothing
+    const sortedErrors = [...grammarState.errors].sort((a, b) => b.original.length - a.original.length);
+    
+    let result: (string | React.ReactElement)[] = [grammarState.text];
+
+    sortedErrors.forEach(error => {
+      const newResult: (string | React.ReactElement)[] = [];
+      result.forEach(part => {
+        if (typeof part !== 'string') {
+          newResult.push(part);
+          return;
+        }
+
+        const pieces = part.split(error.original);
+        pieces.forEach((piece, i) => {
+          newResult.push(piece);
+          if (i < pieces.length - 1) {
+            newResult.push(
+              <span 
+                key={`${error.id}-${i}`}
+                className={`
+                  cursor-pointer transition-all duration-300
+                  ${error.type === 'grammar' ? 'border-b-2 border-red-400 bg-red-50/30' : 
+                    error.type === 'spelling' ? 'border-b-2 border-orange-400 bg-orange-50/30' : 
+                    'border-b-2 border-blue-400 bg-blue-50/30'}
+                  hover:bg-opacity-50
+                `}
+                onClick={() => {
+                  // Optional: scroll the suggestion into view or highlight it
+                  const element = document.getElementById(`error-card-${error.id}`);
+                  if (element) element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }}
+              >
+                {error.original}
+              </span>
+            );
+          }
+        });
+      });
+      result = newResult;
+    });
+
+    return result;
   };
 
   return (
@@ -241,27 +316,55 @@ export const GrammarChecker: React.FC = () => {
       </div>
 
       <div className="flex-1 flex gap-6 min-h-0">
-        {/* Editor Area */}
-        <div className="flex-1 bg-white dark:bg-dark-surface rounded-xl shadow-sm border border-slate-200 dark:border-dark-border flex flex-col p-6 relative">
-          {/* Grammar Content Area */}
-            <div className="flex-1 flex flex-col min-h-0 relative">
-              {grammarState.isLoading && (
-                <div className="absolute inset-0 bg-white/60 dark:bg-dark-surface/60 backdrop-blur-[2px] z-20 flex flex-col items-center justify-center animate-in fade-in duration-300">
-                  <div className="relative">
-                    <div className="w-16 h-16 border-4 border-violet-100 border-t-violet-600 rounded-full animate-spin"></div>
-                    <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-violet-500 animate-pulse" size={20} />
-                  </div>
-                  <p className="mt-4 text-violet-700 dark:text-violet-400 font-medium animate-pulse">Analyzing text...</p>
+        {/* Editor Area with Highlighting Overlay */}
+        <div className="flex-1 bg-white dark:bg-dark-surface rounded-xl shadow-sm border border-slate-200 dark:border-dark-border flex flex-col p-6 relative overflow-hidden">
+          <div className="flex-1 relative min-h-0">
+            {/* The Background Highlights (div) */}
+            <div 
+              className="absolute inset-0 w-full h-full p-0 m-0 pointer-events-none text-lg leading-relaxed text-transparent whitespace-pre-wrap break-words overflow-auto"
+              style={{ 
+                fontFamily: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif',
+                padding: '0',
+                lineHeight: '1.625',
+                zIndex: 0
+              }}
+            >
+              {renderHighlightedText()}
+            </div>
+
+            {/* The Foreground Input (textarea) */}
+            <textarea
+              value={grammarState.text}
+              onChange={(e) => { 
+                const val = e.target.value; 
+                setLocalText(val); 
+                saveInputText('grammar', val); 
+                setGrammarState(prev => ({ ...prev, text: val })); 
+              }}
+              onScroll={(e) => {
+                const overlay = e.currentTarget.previousSibling as HTMLDivElement;
+                if (overlay) overlay.scrollTop = e.currentTarget.scrollTop;
+              }}
+              placeholder="Type or paste text here to check grammar..."
+              className="absolute inset-0 w-full h-full resize-none outline-none bg-transparent text-lg leading-relaxed text-slate-800 dark:text-slate-200 placeholder-slate-400 z-10 whitespace-pre-wrap break-words overflow-auto"
+              style={{
+                fontFamily: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif',
+                lineHeight: '1.625',
+                padding: '0'
+              }}
+              spellCheck={false} 
+            />
+
+            {grammarState.isLoading && (
+              <div className="absolute inset-0 bg-white/60 dark:bg-dark-surface/60 backdrop-blur-[2px] z-20 flex flex-col items-center justify-center animate-in fade-in duration-300">
+                <div className="relative">
+                  <div className="w-16 h-16 border-4 border-violet-100 border-t-violet-600 rounded-full animate-spin"></div>
+                  <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-violet-500 animate-pulse" size={20} />
                 </div>
-              )}
-          <textarea
-            value={grammarState.text}
-            onChange={(e) => { const val = e.target.value; setLocalText(val); saveInputText('grammar', val); setGrammarState(prev => ({ ...prev, text: val })); }}
-            placeholder="Type or paste text here to check grammar..."
-            className="w-full h-full resize-none outline-none bg-transparent text-lg leading-relaxed text-slate-800 dark:text-slate-200 placeholder-slate-400"
-            spellCheck={false} 
-          />
-        </div>
+                <p className="mt-4 text-violet-700 dark:text-violet-400 font-medium animate-pulse">Analyzing text...</p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Sidebar Suggestions & Forecast */}
@@ -278,21 +381,29 @@ export const GrammarChecker: React.FC = () => {
                 <button
                   onClick={() => handleFeedback(1)}
                   disabled={!lastHistoryEntryId}
-                  className="flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50"
+                  className={`flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50 transition-all duration-300 ${
+                    feedbackAnimation === 'up' 
+                      ? 'bg-green-100 border-green-300 text-green-700 dark:bg-green-900/30 dark:border-green-700 dark:text-green-400 scale-110' 
+                      : ''
+                  }`}
                 >
-                  <ThumbsUp size={12} /> Helpful
+                  <ThumbsUp size={12} className={feedbackAnimation === 'up' ? 'animate-pulse' : ''} /> Helpful
                 </button>
                 <button
                   onClick={() => handleFeedback(-1)}
                   disabled={!lastHistoryEntryId}
-                  className="flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50"
+                  className={`flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50 transition-all duration-300 ${
+                    feedbackAnimation === 'down' 
+                      ? 'bg-red-100 border-red-300 text-red-700 dark:bg-red-900/30 dark:border-red-700 dark:text-red-400 scale-110' 
+                      : ''
+                  }`}
                 >
-                  <ThumbsDown size={12} /> Needs fix
+                  <ThumbsDown size={12} className={feedbackAnimation === 'down' ? 'animate-pulse' : ''} /> Needs fix
                 </button>
                 <button
                   onClick={() => setShowFeedbackInput(!showFeedbackInput)}
                   disabled={!lastHistoryEntryId}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50 ${showFeedbackInput ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400' : ''}`}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50 transition-all duration-300 ${showFeedbackInput ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400' : ''}`}
                 >
                   <MessageSquare size={12} /> Add note
                 </button>
@@ -312,7 +423,7 @@ export const GrammarChecker: React.FC = () => {
                       }
                     }}
                     placeholder="Add a custom feedback note..."
-                    className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-primary-500 outline-none"
+                    className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-surface text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-primary-500 outline-none"
                   />
                   <button
                     onClick={() => handleFeedback(1)}
@@ -324,7 +435,7 @@ export const GrammarChecker: React.FC = () => {
                   <button
                     onClick={() => handleFeedback(-1)}
                     disabled={!feedbackComment.trim()}
-                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50"
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-dark-border text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 disabled:opacity-50"
                   >
                     Negative
                   </button>
@@ -341,7 +452,11 @@ export const GrammarChecker: React.FC = () => {
               )}
 
               {grammarState.errors.map((err) => (
-                <div key={err.id} className="bg-white dark:bg-dark-surface p-4 rounded-lg shadow-sm border border-slate-200 dark:border-dark-border group hover:border-primary-300 transition-colors">
+                <div 
+                  key={err.id} 
+                  id={`error-card-${err.id}`}
+                  className="bg-white dark:bg-dark-surface p-4 rounded-lg shadow-sm border border-slate-200 dark:border-dark-border group hover:border-primary-300 transition-all duration-300 animate-in slide-in-from-right-2"
+                >
                   <div className="flex items-start justify-between mb-2">
                      <span className={`text-xs font-bold px-2 py-0.5 rounded uppercase tracking-wide
                        ${err.type === 'grammar' ? 'bg-red-100 text-red-700' : 
@@ -363,7 +478,7 @@ export const GrammarChecker: React.FC = () => {
 
                   <button 
                     onClick={() => applyFix(err.id)}
-                    className="w-full py-1.5 bg-primary-50 hover:bg-primary-100 dark:bg-primary-900/20 dark:hover:bg-primary-900/30 text-primary-700 dark:text-primary-300 text-sm font-medium rounded transition-colors"
+                    className="w-full py-1.5 bg-primary-50 hover:bg-primary-100 dark:bg-primary-900/20 dark:hover:bg-primary-900/30 text-primary-700 dark:text-primary-300 text-sm font-medium rounded transition-all active:scale-95"
                   >
                     Accept Fix
                   </button>

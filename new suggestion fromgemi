@@ -1,0 +1,68 @@
+Strategy 1: The Companion Local Backend (Highly Recommended)
+Since you are already running this locally, the industry standard for this problem is to decouple the UI from the heavy processing by spinning up a lightweight local server. Python is significantly better at document processing than JavaScript.
+
+The Architecture:
+
+React Frontend sends the file path or streams the file to a local Python FastAPI or Node.js server.
+The local server processes the file in chunks using system RAM (bypassing browser limits).
+The server sends back the processed vector embeddings to the frontend's IndexedDB.
+Best Libraries for this:
+
+Python: unstructured (The gold standard for LLM document parsing). It handles PDF, DOCX, PPTX, and XLSX effortlessly.
+Python: PyPDF2 or pdfplumber (for large PDFs).
+Node.js (if you want to keep it JavaScript): pdf-parse (PDF), mammoth (DOCX), xlsx / SheetJS (Excel).
+Strategy 2: Browser-Native Streaming & Garbage Collection (If you MUST stay 100% Frontend)
+If you cannot add a backend and must process inside the React app, you cannot load the file as an ArrayBuffer all at once. You must implement Stream Processing and strict Garbage Collection.
+
+1. Implement Origin Private File System (OPFS)
+Instead of keeping the 50MB file in memory, write it directly to the browser's high-performance local virtual disk.
+
+// OPFS allows you to stream large files without hitting RAM limits
+const root = await navigator.storage.getDirectory();
+const fileHandle = await root.getFileHandle('large_doc.pdf', { create: true });
+// Stream chunks to disk directly
+2. Page-by-Page PDF Processing
+Your current implementation likely calls pdfjs.getDocument(), which loads the whole document structure into RAM. You must manually destroy objects page-by-page.
+
+// Inside your Web Worker
+const loadingTask = pdfjsLib.getDocument(fileData);
+const pdf = await loadingTask.promise;
+
+for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    
+    // 1. Chunk the text
+    // 2. Send chunk to Vector store/IndexedDB immediately
+    
+    // CRITICAL: Free up memory immediately
+    page.cleanup(); 
+}
+// Destroy the main document when done
+loadingTask.destroy(); 
+3. Libraries for Office Files in the Browser
+To support Office files in-browser without crashing, use these specialized libraries:
+
+Excel/CSV: SheetJS (xlsx) or PapaParse. PapaParse is specifically designed to stream large CSV/Excel data row-by-row without loading the whole file into memory.
+Word (.docx): mammoth.js. It ignores heavy formatting and only extracts raw text and semantic HTML, which uses a fraction of the memory.
+PowerPoint (.pptx): docxtemplater or write a custom JS unzipper. (PPTX files are just ZIP files containing XML. You can use JSZip to stream the ZIP and only extract text from the slide[X].xml files, completely ignoring the heavy images).
+Strategy 3: Wrap as a Local Desktop App (The "Tauri" Approach)
+If your tool is meant to be run locally by your team, wrap your React/Vite app using Tauri (a lightweight alternative to Electron).
+
+Why this fixes the problem immediately:
+
+Tauri gives your React app access to a Rust-based backend automatically.
+Rust can read a 50MB, 500MB, or 5GB file from the local file system using a buffer stream.
+You don't need to load the file into the browser at all. Rust reads the file, chunks the text, and passes only the small 800-character chunks to your React frontend one by one via Tauri's IPC (Inter-Process Communication).
+📋 Action Plan for Your Team
+If I were your lead architect, here is exactly what I would recommend you implement next:
+
+Immediate Fix (Frontend Only):
+Refactor the ocrService.ts to process PDFs in a for loop, extracting exactly 1 page at a time.
+Call page.cleanup() after every page.
+Pause the Javascript execution for 50ms (await new Promise(r => setTimeout(r, 50))) between pages to allow the browser's Garbage Collector to clear RAM.
+Add Office Support Safely:
+Install mammoth for DOCX files.
+Install papaparse for CSV and xlsx for Excel.
+Long-term Fix:
+Adopt Strategy 1 or Strategy 3. The reality of building a Knowledge Base AI is that heavy vector embedding and document processing fundamentally belongs outside the browser tab's memory space.

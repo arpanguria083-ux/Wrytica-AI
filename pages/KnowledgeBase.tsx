@@ -1,13 +1,27 @@
-import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+﻿import React, { useState, useMemo, useRef, useCallback, useEffect, startTransition } from 'react';
+import { FixedSizeList as List } from 'react-window';
 import { 
   Inbox, FileText, Trash, Plus, Layers, FolderUp, HardDrive, 
   RefreshCw, Upload, X, CheckCircle, AlertCircle, GitBranch, 
-  Square, CheckSquare, FolderCheck, FolderPlus, LogOut, ShieldCheck, StopCircle
+  Square, CheckSquare, FolderCheck, FolderPlus, LogOut, ShieldCheck, StopCircle,
+  Image
 } from 'lucide-react';
+import { documentProcessorAPI, processFileWithFallback } from '../services/backendApi';
+import { useBackendStatus } from '../hooks/useBackendStatus';
+import { processFilesNonBlocking } from '../services/nonBlockingProcessor';
+import { processFilesBatched } from '../services/batchedProcessor';
 import { useAppContext } from '../contexts/AppContext';
 import { KnowledgeBaseService } from '../services/knowledgeBaseService';
-import { generateId, PageIndexNode, KnowledgeDocument } from '../utils';
-import { getPdfJs, cleanupCanvas, extractPdfText } from '../services/ocrService';
+import { 
+  generateId, PageIndexNode, KnowledgeDocument,
+  IngestionConfig, DEFAULT_INGESTION_CONFIG, PDF_EXTRACTION_MODE_STORAGE_KEY
+} from '../utils';
+import { getPdfJs, cleanupCanvas, extractPdfTextWithOffloading } from '../services/ocrService';
+import { INGESTION_CONFIG_KEY, loadIngestionConfig, saveIngestionConfig } from '../utils/ingestionConfig';
+
+// Virtual list: use when doc count exceeds this (only visible rows rendered)
+const VIRTUAL_LIST_THRESHOLD = 50;
+const VIRTUAL_ROW_HEIGHT = 240;
 
 
 // Supported file extensions for local folder indexing
@@ -27,36 +41,8 @@ const SKIP_PATTERNS = [
   'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb'
 ];
 
-// --- Configurable Ingestion Limits (loaded from localStorage, editable in Settings) ---
-const INGESTION_CONFIG_KEY = 'wrytica_ingestion_config';
-
-export interface IngestionConfig {
-  maxFileSizeMB: number;
-  maxPdfPages: number;
-  batchSize: number;
-  memoryThresholdMB: number;
-  maxStoredContentLength: number;
-}
-
-export const DEFAULT_INGESTION_CONFIG: IngestionConfig = {
-  maxFileSizeMB: 20,
-  maxPdfPages: 50,
-  batchSize: 20,
-  memoryThresholdMB: 400,
-  maxStoredContentLength: 50000,
-};
-
-const loadIngestionConfig = (): IngestionConfig => {
-  try {
-    const stored = localStorage.getItem(INGESTION_CONFIG_KEY);
-    if (stored) return { ...DEFAULT_INGESTION_CONFIG, ...JSON.parse(stored) };
-  } catch { /* use defaults */ }
-  return { ...DEFAULT_INGESTION_CONFIG };
-};
-
-export const saveIngestionConfig = (config: IngestionConfig) => {
-  localStorage.setItem(INGESTION_CONFIG_KEY, JSON.stringify(config));
-};
+// loadIngestionConfig / saveIngestionConfig / INGESTION_CONFIG_KEY live in
+// utils/ingestionConfig.ts so this file exports only React components (Fast Refresh).
 
 const truncateContent = (text: string, maxLength: number): string => {
   if (text.length <= maxLength) return text;
@@ -93,7 +79,8 @@ export const KnowledgeBase: React.FC = () => {
     connectWorkspace,
     disconnectWorkspace,
     storageMode,
-    setBulkIngestionInProgress
+    setBulkIngestionInProgress,
+    workspaceSyncError
   } = useAppContext();
 
   const knowledgeBase = kbContext || [];
@@ -104,6 +91,9 @@ export const KnowledgeBase: React.FC = () => {
   const [drivePath, setDrivePath] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
+  
+  // Backend connection status
+  const { available: backendAvailable } = useBackendStatus();
   
   // Local folder indexing state
   const [indexProgress, setIndexProgress] = useState<IndexProgress | null>(null);
@@ -126,6 +116,24 @@ export const KnowledgeBase: React.FC = () => {
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [isCreatingTree, setIsCreatingTree] = useState(false);
   const [treeProgress, setTreeProgress] = useState<{ current: number; total: number; docTitle: string } | null>(null);
+
+  // Pagination (used when not virtualizing): cap visible docs for small/medium KB
+  const DOCS_PAGE_SIZE = 50;
+  const [visibleDocCount, setVisibleDocCount] = useState(DOCS_PAGE_SIZE);
+  const useVirtualList = knowledgeBase.length > VIRTUAL_LIST_THRESHOLD;
+  const visibleDocs = useMemo(
+    () => knowledgeBase.slice(0, visibleDocCount),
+    [knowledgeBase, visibleDocCount]
+  );
+  const hasMoreDocs = !useVirtualList && knowledgeBase.length > visibleDocCount;
+  const loadMoreDocs = useCallback(() => {
+    setVisibleDocCount(prev => Math.min(prev + DOCS_PAGE_SIZE, knowledgeBase.length));
+  }, [knowledgeBase.length]);
+  useEffect(() => {
+    if (knowledgeBase.length > 0 && knowledgeBase.length < visibleDocCount) {
+      setVisibleDocCount(Math.min(visibleDocCount, knowledgeBase.length));
+    }
+  }, [knowledgeBase.length, visibleDocCount]);
 
   const handleAddDocument = async () => {
     if (!title.trim() || (!content.trim() && pageImages.length === 0)) return;
@@ -152,6 +160,14 @@ export const KnowledgeBase: React.FC = () => {
     }
   };
 
+  const addButtonDisabledReason = loading
+    ? 'Saving...'
+    : !title.trim()
+      ? 'Enter a title to enable Add to KB'
+      : (!content.trim() && pageImages.length === 0)
+        ? 'Add content or upload a PDF/image'
+        : '';
+
   const handleFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -168,6 +184,7 @@ export const KnowledgeBase: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file) return;
     
+    setStatus(`Processing ${file.name}...`);
     try {
       if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
         const images: string[] = [];
@@ -175,9 +192,11 @@ export const KnowledgeBase: React.FC = () => {
         const pdfjs = await getPdfJs();
         const pdf = await pdfjs.getDocument(await file.arrayBuffer()).promise;
         const pageCount = Math.min(pdf.numPages, 5);
-        let canvas: HTMLCanvasElement | null = null;
+        
+        setStatus(`Extracting ${pageCount} pages from PDF...`);
         
         for (let i = 1; i <= pageCount; i++) {
+          setStatus(`Processing page ${i}/${pageCount}...`);
           const page = await pdf.getPage(i);
           const viewport = page.getViewport({ scale: 1.2 });
           
@@ -193,10 +212,13 @@ export const KnowledgeBase: React.FC = () => {
           
           // Cleanup canvas immediately after capturing to free memory
           cleanupCanvas(pageCanvas);
+          
+          // Yield to UI
+          await new Promise(r => setTimeout(r, 0));
         }
         
         setPageImages(images);
-        setStatus(`Captured ${images.length} page images for vision RAG.`);
+        setStatus(`✅ Captured ${images.length} page images from "${file.name}" for vision RAG.`);
       } else if (file.type.startsWith('image/')) {
         const imgUrl = await new Promise<string>((resolve) => {
           const r = new FileReader();
@@ -204,16 +226,37 @@ export const KnowledgeBase: React.FC = () => {
           r.readAsDataURL(file);
         });
         setPageImages([imgUrl]);
-        setStatus('Captured 1 image for vision RAG.');
+        setStatus(`✅ Captured image "${file.name}" for vision RAG.`);
       }
     } catch (err) {
       console.error('Error processing file:', err);
-      setStatus(`Error: ${err instanceof Error ? err.message : 'Failed to process file'}`);
+      setStatus(`❌ Error: ${err instanceof Error ? err.message : 'Failed to process file'}`);
     }
   };
 
   const [ingestionConfig] = useState(loadIngestionConfig);
   const MAX_FILE_SIZE = ingestionConfig.maxFileSizeMB * 1024 * 1024;
+  const useDeepPdfExtraction = backendAvailable && ingestionConfig.pdfExtractionMode === 'deep';
+
+  const extractPdfForKnowledgeBase = async (
+    file: File,
+    onProgress?: (page: number, total: number) => void
+  ): Promise<{ text: string; pages: number; extractedPages: number }> => {
+    if (useDeepPdfExtraction) {
+      const result = await documentProcessorAPI.deepExtractPdf(file);
+      onProgress?.(result.total_pages ?? 0, result.total_pages ?? 0);
+      return {
+        text: result.markdown,
+        pages: result.total_pages ?? 0,
+        extractedPages: result.total_pages ?? 0,
+      };
+    }
+
+    return await extractPdfTextWithOffloading(file, {
+      maxPages: ingestionConfig.maxPdfPages,
+      onProgress,
+    });
+  };
 
   // Memory check helper - returns true if should abort
   const checkMemoryThreshold = (currentBytes: number): boolean => {
@@ -306,14 +349,11 @@ export const KnowledgeBase: React.FC = () => {
           
           if (isPdf) {
             try {
-              const result = await extractPdfText(file, {
-                maxPages: Math.min(ingestionConfig.maxPdfPages, 10), // CRITICAL: Limit pages to prevent memory explosion
-                onProgress: (page, total) => {
-                  setFolderUploadProgress(prev => prev ? {
-                    ...prev,
-                    currentFile: `${file.name} (page ${page}/${total})`
-                  } : null);
-                }
+              const result = await extractPdfForKnowledgeBase(file, (page, total) => {
+                setFolderUploadProgress(prev => prev ? {
+                  ...prev,
+                  currentFile: total > 0 ? `${file.name} (page ${page}/${total})` : `${file.name} (${ingestionConfig.pdfExtractionMode === 'deep' ? 'deep extraction' : 'browser PDF path'})`
+                } : null);
               });
               text = result.text;
             } catch (pdfErr) {
@@ -332,15 +372,15 @@ export const KnowledgeBase: React.FC = () => {
           
           processedBytesRef.current += file.size;
           
-          const doc = KnowledgeBaseService.createDocument({
+          const storedContent = truncateContent(text, ingestionConfig.maxStoredContentLength);
+          const doc = KnowledgeBaseService.createIngestedDocument({
             title: file.webkitRelativePath || file.name,
-            content: text,
+            content: storedContent,
+            chunkSourceContent: text,
             source: 'Bulk Folder Import',
             tags: parsedTags.length ? parsedTags : ['bulk-import'],
             drivePath: '',
           });
-          // Truncate stored content AFTER chunking so chunks cover full text
-          doc.content = truncateContent(text, ingestionConfig.maxStoredContentLength);
           
           pendingDocs.push(doc);
           totalChunksCreated += doc.chunks?.length || 0;
@@ -535,15 +575,29 @@ export const KnowledgeBase: React.FC = () => {
   // Use refs for async state to avoid closure issues
   const processedBytesRef = useRef(0);
   const isAbortedRef = useRef(false);
+  const isProcessingLockRef = useRef(false); // CRITICAL: Prevents double-clicks
 
   // Index local folder using File System Access API
   const handleIndexLocalFolder = useCallback(async () => {
+    // CRITICAL: Check for double-clicks or concurrent processing
+    if (isProcessingLockRef.current) {
+      console.log('[IndexLocalFolder] BLOCKED: Already processing');
+      return;
+    }
+    
     if (!('showDirectoryPicker' in window)) {
       setStatus('Your browser does not support folder picking. Use the CLI script instead.');
       return;
     }
 
-    if (isIndexing) return;
+    if (isIndexing) {
+      console.log('[IndexLocalFolder] BLOCKED: isIndexing is true');
+      return;
+    }
+    
+    // ACQUIRE LOCK
+    isProcessingLockRef.current = true;
+    console.log('[IndexLocalFolder] LOCK ACQUIRED - Starting processing');
 
     // Reset cancel flag
     isCancelledRef.current = false;
@@ -572,6 +626,10 @@ export const KnowledgeBase: React.FC = () => {
       });
       const total = files.length;
 
+      // CRITICAL: Disable vector rebuilds during bulk ingestion to prevent crashes
+      setBulkIngestionInProgress(true);
+      console.log('[IndexLocalFolder] Vector rebuilds disabled for bulk ingestion');
+
       // Reset memory tracking
       processedBytesRef.current = 0;
 
@@ -580,27 +638,28 @@ export const KnowledgeBase: React.FC = () => {
       const errors: string[] = [];
 
       const textFiles: { handle: FileSystemFileHandle; file: File }[] = [];
-      
+      let fileLoopCount = 0;
       for (const fileHandle of files) {
+        if (isCancelledRef.current) break;
         try {
           const file = await fileHandle.getFile();
           const fileName = fileHandle.name.toLowerCase();
-          
           if (file.size > MAX_FILE_SIZE) {
             skipCount++;
             continue;
           }
-
-          // Skip images only - PDFs are now handled via extractPdfText
           if (/\.(jpg|jpeg|png|webp)$/.test(fileName)) {
             skipCount++;
             continue;
           }
-
           textFiles.push({ handle: fileHandle, file });
           processedBytesRef.current += file.size;
         } catch (err) {
           skipCount++;
+        }
+        fileLoopCount++;
+        if (fileLoopCount % 20 === 0) {
+          await new Promise(r => setTimeout(r, 0));
         }
       }
 
@@ -645,7 +704,7 @@ export const KnowledgeBase: React.FC = () => {
           let text: string;
           
           if (lowerName.endsWith('.pdf')) {
-            const result = await extractPdfText(file, {
+            const result = await extractPdfTextWithOffloading(file, {
               maxPages: Math.min(ingestionConfig.maxPdfPages, 10), // CRITICAL: Limit pages to prevent memory explosion
               onProgress: (page, total) => {
                 setIndexProgress(prev => prev ? {
@@ -664,15 +723,15 @@ export const KnowledgeBase: React.FC = () => {
             return null;
           }
 
-          const doc = KnowledgeBaseService.createDocument({
+          const storedContent = truncateContent(text, ingestionConfig.maxStoredContentLength);
+          const doc = KnowledgeBaseService.createIngestedDocument({
             title: fileName,
-            content: text,
+            content: storedContent,
+            chunkSourceContent: text,
             source: `Local: ${dirHandle.name}`,
             tags: parsedTags.length ? parsedTags : ['local-folder'],
             drivePath: dirHandle.name,
           });
-          // Truncate stored content AFTER chunking so chunks cover full text
-          doc.content = truncateContent(text, ingestionConfig.maxStoredContentLength);
 
           return doc;
         } catch (err: any) {
@@ -681,77 +740,76 @@ export const KnowledgeBase: React.FC = () => {
         }
       };
 
-      // FIX #6: Stream process with memory monitoring
-      for (let i = 0; i < textFiles.length; i++) {
-        // FIX #3: Check memory threshold and cancellation
-        if (checkMemoryThreshold(processedBytesRef.current) || isCancelledRef.current) {
+      // REPLACE ENTIRE PROCESSING SECTION WITH NON-BLOCKING APPROACH
+      console.log(`[IndexLocalFolder] Using new non-blocking processor for ${textFiles.length} files`);
+      console.log(`[IndexLocalFolder] Backend available: ${backendAvailable}`);
+      
+      // Extract just the File objects
+      const filesToProcess = textFiles.map(tf => tf.file);
+      
+      // Use batched processor for better memory management
+      console.log(`[IndexLocalFolder] Using BATCHED processor for ${filesToProcess.length} files`);
+      
+      await processFilesBatched({
+        files: filesToProcess,
+        source: dirHandle.name,
+        tags: parsedTags,
+        backendAvailable,
+        pdfExtractionMode: ingestionConfig.pdfExtractionMode,
+        batchSize: 2,
+        delayBetweenBatches: 800,
+        delayBetweenFiles: 150,
+        maxStoredContentLength: ingestionConfig.maxStoredContentLength,
+        onProgress: ({ currentBatch, totalBatches, filesInBatch, totalFiles, currentFile, status }) => {
+          const totalProgress = ((currentBatch - 1) * 2 + filesInBatch);
           setIndexProgress(prev => prev ? {
             ...prev,
-            currentFile: 'Memory limit reached - stopping'
+            processed: Math.min(totalProgress, totalFiles),
+            currentFile: status === 'saving' 
+              ? `${currentFile} (batch ${currentBatch}/${totalBatches})` 
+              : currentFile,
+            startTime
           } : null);
-          break;
-        }
-        
-        const { file } = textFiles[i];
-        processedBytesRef.current += file.size;
-        
-        setIndexProgress(prev => prev ? {
-          ...prev,
-          processed: i + 1,
-          currentFile: file.name,
-          startTime // Preserve startTime
-        } : null);
-
-        const doc = await processFile(file);
-        if (doc) {
-          newDocuments.push(doc);
-          successCount++;
-        } else {
-          skipCount++;
-        }
-
-        // Periodically update with batches
-        if (newDocuments.length >= batchSize) {
-          await addKnowledgeDocumentsBatch([...newDocuments]);
-          const processed = i + 1;
-          const remaining = textFiles.length - processed;
-          const eta = estimateProcessingTime(remaining);
-          setIndexProgress(prev => prev ? {
-            ...prev,
-            processed,
-            currentFile: `Indexed ${processed}/${textFiles.length}. ETA: ${eta}`,
-            startTime: prev.startTime // Preserve startTime
-          } : null);
-          newDocuments.length = 0;
-          await new Promise(r => setTimeout(r, 0)); // Yield to UI
-        }
-      }
-
-      // Add remaining documents
-      if (newDocuments.length > 0) {
-        await addKnowledgeDocumentsBatch(newDocuments);
-      }
-
-      setIndexProgress({
-        total,
-        processed: total,
-        success: successCount,
-        skipped: skipCount,
-        errors: errors.slice(0, 10),
-        currentFile: 'Complete',
-        startTime
+        },
+        onBatchComplete: async ({ batchNumber, success, failed, documents }) => {
+          console.log(`[IndexLocalFolder] Batch ${batchNumber} complete: ${success} success, ${failed} failed`);
+          
+          // Save batch immediately
+          if (documents.length > 0) {
+            await addKnowledgeDocumentsBatch(documents);
+            console.log(`[IndexLocalFolder] Saved batch ${batchNumber} (${documents.length} docs)`);
+          }
+        },
+        onComplete: async ({ totalSuccess, totalFailed, totalSkipped }) => {
+          const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+          const finalChunkEstimate = Math.ceil(totalBytes / 600);
+          
+          setTimeout(() => {
+            setIndexProgress({
+              total,
+              processed: total,
+              success: totalSuccess,
+              skipped: totalFailed + totalSkipped,
+              errors: [],
+              currentFile: 'Complete',
+              startTime
+            });
+          }, 0);
+          
+          setTimeout(() => {
+            setEstimatedChunks(null);
+            
+            if (totalFailed + totalSkipped > 0) {
+              setStatus(`✅ Indexed ${totalSuccess} files (~${finalChunkEstimate} chunks) in ${totalTime}s. ${totalFailed + totalSkipped} files skipped.`);
+            } else {
+              setStatus(`✅ Indexed ${totalSuccess} files (~${finalChunkEstimate} chunks) from local folder in ${totalTime}s.`);
+            }
+          }, 50);
+          
+          console.log(`[IndexLocalFolder] Complete: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped`);
+        },
+        onCancel: () => isCancelledRef.current
       });
-
-      const totalTime = estimateProcessingTime(successCount);
-      const finalChunkEstimate = Math.ceil(totalBytes / 600);
-      setEstimatedChunks(null);
-      if (skipCount > 0 && textFiles.length > 0) {
-        setStatus(`✅ Indexed ${successCount} files (~${finalChunkEstimate} chunks) in ${totalTime}. ${skipCount} files skipped.`);
-      } else if (textFiles.length === 0 && skipCount > 0) {
-        setStatus(`⚠️ No indexable files found. ${skipCount} files skipped.`);
-      } else {
-        setStatus(`✅ Indexed ${successCount} files (~${finalChunkEstimate} chunks) from local folder in ${totalTime}.`);
-      }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         setStatus(`Error: ${err.message}`);
@@ -759,8 +817,14 @@ export const KnowledgeBase: React.FC = () => {
     } finally {
       setIsIndexing(false);
       isCancelledRef.current = false;
+      // CRITICAL: Re-enable vector rebuilds after bulk ingestion
+      setBulkIngestionInProgress(false);
+      // CRITICAL: Release processing lock
+      isProcessingLockRef.current = false;
+      console.log('[IndexLocalFolder] LOCK RELEASED - Processing complete');
+      console.log('[IndexLocalFolder] Vector rebuilds re-enabled');
     }
-  }, [addKnowledgeDocument, addKnowledgeDocumentsBatch, parsedTags]);
+  }, [addKnowledgeDocument, addKnowledgeDocumentsBatch, parsedTags, backendAvailable]);
 
   // Cancel indexing function - also resets bulk ingestion flag to re-enable vector indexing
   const cancelIndexing = useCallback(() => {
@@ -801,7 +865,8 @@ export const KnowledgeBase: React.FC = () => {
     return `${(speed * 60).toFixed(0)} files/min`;
   };
 
-  // Bridge PageIndex Folder mapping (catalog.json + trees/ folder)
+  // Bridge PageIndex Folder mapping (catalog.json + trees/ folder) — batched to avoid UI freeze
+  const BRIDGE_BATCH_SIZE = 15;
   const handleBridgePageIndexFolder = async () => {
     if (!('showDirectoryPicker' in window)) {
       setStatus('Your browser does not support folder picking. Use the CLI script instead.');
@@ -824,14 +889,12 @@ export const KnowledgeBase: React.FC = () => {
       const catalogContent = await catalogFile.text();
       const catalog = JSON.parse(catalogContent);
 
-      // Handle both array and object formats for the catalog
-      let entries = [];
+      let entries: any[] = [];
       if (Array.isArray(catalog)) {
         entries = catalog;
       } else if (catalog.entries && Array.isArray(catalog.entries)) {
         entries = catalog.entries;
       } else {
-        // Flat object format where keys are IDs (common in PageIndex exports)
         entries = Object.values(catalog);
       }
 
@@ -844,10 +907,11 @@ export const KnowledgeBase: React.FC = () => {
         throw new Error('trees/ folder not found. The bridge requires a "trees" subdirectory containing the PageIndex JSON files.');
       }
 
-      const newDocs: KnowledgeDocument[] = [];
       let successCount = 0;
+      const batch: KnowledgeDocument[] = [];
 
-      for (const entry of entries) {
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
         const docId = entry.doc_id || entry.id;
         if (!docId) continue;
 
@@ -858,12 +922,10 @@ export const KnowledgeBase: React.FC = () => {
           const treeText = await treeFile.text();
           const treeData = JSON.parse(treeText);
 
-          // Convert nodes using existing normalization logic
           const nodes = normalizePageIndexNodes(treeData.nodes || treeData.tree || treeData.sections || (Array.isArray(treeData) ? treeData : [treeData]));
           if (nodes.length === 0) continue;
 
-          // Basic content reconstruction for search
-          const docContent = entry.summary || nodes.map(node => node.content || node.summary || node.title).join('\n\n');
+          const docContent = entry.summary || nodes.map((node: PageIndexNode) => node.content || node.summary || node.title).join('\n\n');
 
           const doc = KnowledgeBaseService.createDocument({
             title: entry.filename || entry.title || `Document ${docId}`,
@@ -874,24 +936,30 @@ export const KnowledgeBase: React.FC = () => {
             pageIndex: nodes
           });
 
-          newDocs.push(doc);
+          batch.push(doc);
           successCount++;
-          
+
           if (successCount % 5 === 0) {
             setStatus(`Bridged ${successCount} documents...`);
           }
+
+          // Flush batch to avoid holding hundreds of docs in memory and to keep UI responsive
+          if (batch.length >= BRIDGE_BATCH_SIZE) {
+            await addKnowledgeDocumentsBatch([...batch]);
+            batch.length = 0;
+            await new Promise(r => setTimeout(r, 50));
+          }
         } catch (e) {
-          // File might not exist or be unreadable - skip silently or log
           console.warn(`Skipping document ${docId}:`, e);
         }
       }
 
-      if (newDocs.length > 0) {
-        await addKnowledgeDocumentsBatch(newDocs);
-        setStatus(`Successfully bridged ${successCount} structured documents with PageIndex data.`);
-      } else {
-        setStatus('No matching PageIndex tree files found to import.');
+      if (batch.length > 0) {
+        await addKnowledgeDocumentsBatch(batch);
       }
+      setStatus(successCount > 0
+        ? `Successfully bridged ${successCount} structured documents with PageIndex data.`
+        : 'No matching PageIndex tree files found to import.');
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         console.error('Bridge failed:', err);
@@ -1114,6 +1182,72 @@ export const KnowledgeBase: React.FC = () => {
   };
 
 
+  // Single document card (shared by grid and virtual list)
+  const renderDocCard = useCallback((doc: KnowledgeDocument) => (
+    <div
+      className={`bg-white dark:bg-dark-surface rounded-2xl border shadow-sm p-4 flex flex-col gap-3 transition-all h-full ${
+        selectedDocIds.has(doc.id)
+          ? 'border-violet-500 dark:border-violet-400 ring-2 ring-violet-100 dark:ring-violet-900/30'
+          : 'border-slate-200 dark:border-dark-border'
+      }`}
+      style={{ minHeight: VIRTUAL_ROW_HEIGHT - 16 }}
+    >
+      <div className="flex justify-between items-start">
+        <div className="flex items-start gap-3">
+          <button onClick={() => toggleDocSelection(doc.id)} className="mt-1 flex-shrink-0">
+            {selectedDocIds.has(doc.id) ? <CheckSquare size={20} className="text-violet-500" /> : <Square size={20} className="text-slate-300 dark:text-slate-600" />}
+          </button>
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white truncate">{doc.title}</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{doc.source || doc.drivePath || 'Uploaded document'}</p>
+          </div>
+        </div>
+        <button onClick={() => removeKnowledgeDocument(doc.id)} className="text-red-500 hover:text-red-700 text-sm flex items-center space-x-1 flex-shrink-0">
+          <Trash size={14} /><span>Remove</span>
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+        {doc.tags?.map(tag => <span key={tag} className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">{tag}</span>)}
+      </div>
+      <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 flex-1 min-h-0">{doc.content}</p>
+      <div className="flex items-center justify-between text-[11px] text-slate-400">
+        <span>{(doc.chunks?.length || 0)} chunks indexed</span>
+        <span>{new Date(doc.createdAt).toLocaleDateString()}</span>
+      </div>
+      {doc.pageIndex && doc.pageIndex.length > 0 && (
+        <div className="space-y-2 text-[11px] text-slate-500 dark:text-slate-400">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wide">
+            <Layers size={14} className="text-slate-400" />
+            <span>{doc.pageIndex.length} PageIndex nodes</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {doc.pageIndex.slice(0, 3).map(node => (
+              <span key={node.id} className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px]">{node.title} {node.pageNumber ? `(Pg ${node.pageNumber})` : ''}</span>
+            ))}
+            {doc.pageIndex.length > 3 && <span className="px-2 py-0.5 rounded-full bg-slate-50 dark:bg-slate-900 text-[11px] text-slate-500">+{doc.pageIndex.length - 3} more</span>}
+          </div>
+        </div>
+      )}
+      {doc.pageImages && doc.pageImages.length > 0 && (
+        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+          <span className="font-semibold text-slate-900 dark:text-white">Vision pages cached: {doc.pageImages.length}</span>
+        </div>
+      )}
+    </div>
+  ), [selectedDocIds, toggleDocSelection, removeKnowledgeDocument]);
+
+  const VirtualRow = useCallback(({ index, style }: { index: number; style: React.CSSProperties }) => {
+    const doc = knowledgeBase[index];
+    if (!doc) return null;
+    return (
+      <div style={{ ...style, paddingBottom: 8 }} className="box-border">
+        {renderDocCard(doc)}
+      </div>
+    );
+  }, [knowledgeBase, renderDocCard]);
+
+  const listHeight = 500;
+
   const documentListElement = useMemo(() => {
     return (
       <div className="space-y-4">
@@ -1124,37 +1258,17 @@ export const KnowledgeBase: React.FC = () => {
           </div>
         ) : (
           <>
-            {/* Batch Actions Bar */}
             <div className="bg-slate-100 dark:bg-slate-800 rounded-xl p-3 flex flex-wrap items-center gap-3">
-              <button
-                onClick={toggleSelectAll}
-                className="flex items-center space-x-2 px-3 py-1.5 text-sm rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700"
-              >
-                {selectedDocIds.size === knowledgeBase.length ? (
-                  <CheckSquare size={16} className="text-primary-500" />
-                ) : (
-                  <Square size={16} className="text-slate-400" />
-                )}
-                <span className="text-slate-700 dark:text-slate-300">
-                  {selectedDocIds.size === knowledgeBase.length ? 'Deselect All' : 'Select All'}
-                </span>
+              <button onClick={toggleSelectAll} className="flex items-center space-x-2 px-3 py-1.5 text-sm rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700">
+                {selectedDocIds.size === knowledgeBase.length ? <CheckSquare size={16} className="text-primary-500" /> : <Square size={16} className="text-slate-400" />}
+                <span className="text-slate-700 dark:text-slate-300">{selectedDocIds.size === knowledgeBase.length ? 'Deselect All' : 'Select All'}</span>
               </button>
-              
               <div className="h-6 w-px bg-slate-300 dark:bg-slate-600" />
-              
-              <span className="text-sm text-slate-500 dark:text-slate-400">
-                {selectedDocIds.size} selected
-              </span>
-              
-              <button
-                onClick={handleBatchCreateTree}
-                disabled={selectedDocIds.size === 0 || isCreatingTree}
-                className="flex items-center space-x-2 px-4 py-1.5 bg-violet-600 text-white text-sm rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
+              <span className="text-sm text-slate-500 dark:text-slate-400">{selectedDocIds.size} selected</span>
+              <button onClick={handleBatchCreateTree} disabled={selectedDocIds.size === 0 || isCreatingTree} className="flex items-center space-x-2 px-4 py-1.5 bg-violet-600 text-white text-sm rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed">
                 <GitBranch size={14} />
                 <span>{isCreatingTree ? 'Creating...' : 'Create PageIndex Tree'}</span>
               </button>
-              
               {treeProgress && (
                 <div className="flex items-center space-x-2 text-xs text-slate-600 dark:text-slate-300">
                   <span>{treeProgress.current}/{treeProgress.total}</span>
@@ -1162,82 +1276,49 @@ export const KnowledgeBase: React.FC = () => {
                 </div>
               )}
             </div>
-            
-            <div className="grid gap-4">
-            {knowledgeBase.map((doc) => (
-              <div key={doc.id} className={`bg-white dark:bg-dark-surface rounded-2xl border shadow-sm p-4 flex flex-col gap-3 transition-all ${
-                selectedDocIds.has(doc.id) 
-                  ? 'border-violet-500 dark:border-violet-400 ring-2 ring-violet-100 dark:ring-violet-900/30' 
-                  : 'border-slate-200 dark:border-dark-border'
-              }`}>
-                <div className="flex justify-between items-start">
-                  <div className="flex items-start gap-3">
-                    <button
-                      onClick={() => toggleDocSelection(doc.id)}
-                      className="mt-1 flex-shrink-0"
-                    >
-                      {selectedDocIds.has(doc.id) ? (
-                        <CheckSquare size={20} className="text-violet-500" />
-                      ) : (
-                        <Square size={20} className="text-slate-300 dark:text-slate-600" />
-                      )}
-                    </button>
-                    <div>
-                      <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{doc.title}</h3>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">{doc.source || doc.drivePath || 'Uploaded document'}</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => removeKnowledgeDocument(doc.id)}
-                    className="text-red-500 hover:text-red-700 text-sm flex items-center space-x-1"
+
+            {useVirtualList ? (
+              <>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Showing all {knowledgeBase.length} documents (virtual list — only visible rows rendered).
+                </p>
+                <div className="rounded-xl border border-slate-200 dark:border-dark-border overflow-hidden" style={{ height: listHeight }}>
+                  <List
+                    height={listHeight}
+                    itemCount={knowledgeBase.length}
+                    itemSize={VIRTUAL_ROW_HEIGHT}
+                    width="100%"
                   >
-                    <Trash size={14} />
-                    <span>Remove</span>
-                  </button>
+                    {VirtualRow}
+                  </List>
                 </div>
-                <div className="flex flex-wrap gap-2 text-xs text-slate-500">
-                  {doc.tags?.map(tag => (
-                    <span key={tag} className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">{tag}</span>
+              </>
+            ) : (
+              <>
+                {hasMoreDocs && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Showing {visibleDocs.length} of {knowledgeBase.length} documents.
+                  </p>
+                )}
+                <div className="grid gap-4">
+                  {visibleDocs.map((doc) => (
+                    <div key={doc.id}>{renderDocCard(doc)}</div>
                   ))}
                 </div>
-                <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3">{doc.content}</p>
-                <div className="flex items-center justify-between text-[11px] text-slate-400">
-                  <span>{(doc.chunks?.length || 0)} chunks indexed</span>
-                  <span>{new Date(doc.createdAt).toLocaleDateString()}</span>
-                </div>
-                {doc.pageIndex && doc.pageIndex.length > 0 && (
-                  <div className="space-y-2 text-[11px] text-slate-500 dark:text-slate-400">
-                    <div className="flex items-center gap-2 text-xs uppercase tracking-wide">
-                      <Layers size={14} className="text-slate-400" />
-                      <span>{doc.pageIndex.length} PageIndex nodes</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {doc.pageIndex.slice(0, 3).map(node => (
-                        <span key={node.id} className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px]">
-                          {node.title} {node.pageNumber ? `(Pg ${node.pageNumber})` : ''}
-                        </span>
-                      ))}
-                      {doc.pageIndex.length > 3 && (
-                        <span className="px-2 py-0.5 rounded-full bg-slate-50 dark:bg-slate-900 text-[11px] text-slate-500">
-                          +{doc.pageIndex.length - 3} more
-                        </span>
-                      )}
-                    </div>
+                {hasMoreDocs && (
+                  <div className="flex justify-center pt-4">
+                    <button type="button" onClick={loadMoreDocs} className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700">
+                      Load more ({knowledgeBase.length - visibleDocCount} remaining)
+                    </button>
                   </div>
                 )}
-                {doc.pageImages && doc.pageImages.length > 0 && (
-                  <div className="space-y-1 text-[11px] text-slate-500 dark:text-slate-400">
-                    <span className="font-semibold text-slate-900 dark:text-white">Vision pages cached: {doc.pageImages.length}</span>
-                  </div>
-                )}
-              </div>
-            ))}
-            </div>
+              </>
+            )}
           </>
         )}
       </div>
     );
-  }, [knowledgeBase, removeKnowledgeDocument, selectedDocIds, isCreatingTree, treeProgress]);
+  }, [knowledgeBase, visibleDocs, visibleDocCount, hasMoreDocs, useVirtualList, loadMoreDocs, VirtualRow, removeKnowledgeDocument, selectedDocIds, isCreatingTree, treeProgress, renderDocCard]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -1280,10 +1361,13 @@ export const KnowledgeBase: React.FC = () => {
             )}
           </button>
           
+          {workspaceSyncError && <span className="text-xs text-red-500 dark:text-red-400">{workspaceSyncError}</span>}
           {status && <span className="text-xs text-green-600 dark:text-green-400">{status}</span>}
+          {addButtonDisabledReason && <span className="text-xs text-amber-600 dark:text-amber-400">{addButtonDisabledReason}</span>}
           <button
             onClick={handleAddDocument}
             disabled={loading || !title.trim() || (!content.trim() && pageImages.length === 0)}
+            title={addButtonDisabledReason || 'Add current document to Knowledge Base'}
             className="flex items-center space-x-2 px-4 py-2 bg-primary-600 text-white rounded-lg shadow-md hover:bg-primary-700 disabled:opacity-50"
           >
             <Plus size={16} />
@@ -1341,6 +1425,44 @@ export const KnowledgeBase: React.FC = () => {
             className="w-full border border-slate-200 dark:border-slate-700 rounded-lg p-3 bg-slate-50 dark:bg-slate-900 text-sm focus:ring-2 focus:ring-primary-500 outline-none resize-none"
           />
         </label>
+
+        {/* Vision RAG Image Previews */}
+        {pageImages.length > 0 && (
+          <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <Image className="w-3 h-3 text-primary-500" />
+                Vision RAG Previews ({pageImages.length} images)
+              </span>
+              <button 
+                onClick={() => setPageImages([])}
+                className="text-[10px] text-red-500 hover:text-red-600 font-medium"
+              >
+                Clear all
+              </button>
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700">
+              {pageImages.map((img, idx) => (
+                <div key={idx} className="relative group flex-shrink-0">
+                  <img 
+                    src={img} 
+                    alt={`Preview ${idx + 1}`} 
+                    className="h-20 w-auto rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm transition-transform hover:scale-105"
+                  />
+                  <button
+                    onClick={() => setPageImages(prev => prev.filter((_, i) => i !== idx))}
+                    className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-400 italic">
+              These images will be stored as base64 and used for Vision RAG when this document is referenced.
+            </p>
+          </div>
+        )}
 
         <div className="grid gap-4 md:grid-cols-3">
           <label className="flex items-center space-x-3 text-sm border border-slate-200 dark:border-slate-800 p-3 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer transition-colors">
@@ -1405,6 +1527,11 @@ export const KnowledgeBase: React.FC = () => {
 
         {/* Local Folder Indexing Section */}
         <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+          {backendAvailable && (
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
+              💡 For large folders (50+ files), run the Python script (<code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">backend_offload_script.py</code>) to process on the server, export JSON, then use <strong>Import CLI Output</strong> below to avoid browser memory limits.
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={handleIndexLocalFolder}
@@ -1595,3 +1722,4 @@ export const KnowledgeBase: React.FC = () => {
     </div>
   );
 };
+

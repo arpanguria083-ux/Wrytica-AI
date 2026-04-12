@@ -5,8 +5,8 @@ import { detectModelCapabilities, shouldUseReasoningPrompts } from '../utils/mod
 // Note: API key will be provided dynamically by the user through the UI
 // No longer using environment variables for API keys
 
-const MODEL_FAST = 'gemini-2.5-flash';
-const MODEL_REASONING = 'gemini-2.5-flash'; // Using flash for speed in interactive tools
+const MODEL_FAST = 'gemini-2.0-flash';
+const MODEL_REASONING = 'gemini-2.0-flash'; // Using flash for speed in interactive tools
 
 const composeInstruction = (base: string, enhancement?: ContextEnhancement, toolName?: string) => {
   if (!enhancement) return base;
@@ -55,11 +55,11 @@ export const GeminiService = {
     try {
       const ai = new GoogleGenAI({ apiKey });
       
-      const response = await ai.models.generateContent({
+      const response = await (ai.models as any).generateContent({
         model: model,
         contents: text,
-          config: {
-            systemInstruction: finalInstruction,
+        systemInstruction: finalInstruction,
+        config: {
           temperature,
           maxOutputTokens: config.maxCompletionTokens || 2048,
           responseMimeType: 'application/json',
@@ -323,7 +323,7 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
       
       const ai = new GoogleGenAI({ apiKey });
       
-      await ai.models.generateContent({
+      await (ai.models as any).generateContent({
         model: MODEL_FAST,
         contents: 'Test',
         config: { maxOutputTokens: 1 }
@@ -380,11 +380,11 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
     try {
       const ai = new GoogleGenAI({ apiKey });
       
-      const response = await ai.models.generateContent({
+      const response = await (ai.models as any).generateContent({
         model: model,
         contents: text,
-          config: {
-            systemInstruction: finalInstruction,
+        systemInstruction: finalInstruction,
+        config: {
           temperature,
           maxOutputTokens: config.maxCompletionTokens || 2048,
           responseMimeType: 'application/json',
@@ -450,11 +450,11 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
       const ai = new GoogleGenAI({ apiKey });
       
 
-      const response = await ai.models.generateContent({
+      const response = await (ai.models as any).generateContent({
         model: model,
         contents: `Current Text: "${text}"\n\nPatterns History: "${patternsHistory}"`,
-          config: {
-            systemInstruction: finalInstruction,
+        systemInstruction: finalInstruction,
+        config: {
           responseMimeType: 'application/json',
           responseSchema: schema,
           temperature: 0.1,
@@ -499,11 +499,11 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
     try {
       const ai = new GoogleGenAI({ apiKey });
 
-      const response = await ai.models.generateContent({
+      const response = await (ai.models as any).generateContent({
         model: model,
         contents: text,
-          config: {
-            systemInstruction: finalInstruction,
+        systemInstruction: finalInstruction,
+        config: {
           temperature: 0.3,
           maxOutputTokens: config.maxCompletionTokens || 2048,
         }
@@ -553,11 +553,11 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
     try {
       const ai = new GoogleGenAI({ apiKey });
 
-      const response = await ai.models.generateContent({
+      const response = await (ai.models as any).generateContent({
         model: model,
         contents: sourceInfo,
-          config: {
-            systemInstruction: finalInstruction,
+        systemInstruction: finalInstruction,
+        config: {
           responseMimeType: 'application/json',
           responseSchema: schema,
           temperature: 0.1, // High precision
@@ -600,11 +600,11 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
       parts: [{ text: msg.content }]
     }));
 
-    return ai.chats.create({
+    return (ai.chats as any).create({
       model: model,
       history: formattedHistory,
+      systemInstruction: finalInstruction,
       config: {
-        systemInstruction: finalInstruction,
         maxOutputTokens: config.maxCompletionTokens || 2048,
       }
     });
@@ -641,11 +641,11 @@ After your analysis, provide a JSON object with the formatted citation, BibTeX e
     };
 
     try {
-      const response = await ai.models.generateContent({
+      const response = await (ai.models as any).generateContent({
         model: MODEL_REASONING,
         contents: prompt,
+        systemInstruction,
         config: {
-          systemInstruction,
           responseMimeType: 'application/json',
           responseSchema: schema,
           maxOutputTokens: 1024,
@@ -711,11 +711,11 @@ COMMUNICATION: Respond exclusively in ${language} throughout our conversation.`;
       }
     ];
 
-    const response = await ai.models.generateContent({
+    const response = await (ai.models as any).generateContent({
       model: MODEL_REASONING,
       contents,
+      systemInstruction: prompt,
       config: {
-        systemInstruction: prompt,
         responseMimeType: 'text/plain',
         temperature: 0.1,
         maxOutputTokens: 4096

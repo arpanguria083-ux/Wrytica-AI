@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Comprehensive Crash Diagnostic</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 4px; background: #f9f9f9; }
+        .test-section h3 { margin-top: 0; }
+        button { padding: 12px 24px; margin: 5px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-size: 14px; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #6c757d; cursor: not-allowed; }
+        .result { padding: 10px; margin: 10px 0; border-radius: 4px; font-weight: bold; }
+        .result.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .result.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .result.info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        .log { background: #1e1e1e; color: #fff; padding: 15px; font-family: monospace; font-size: 12px; max-height: 500px; overflow-y: auto; white-space: pre-wrap; border-radius: 4px; }
+        .progress { margin: 10px 0; }
+        .progress-bar { width: 100%; height: 20px; background: #e9ecef; border-radius: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; background: #007bff; width: 0%; transition: width 0.3s; }
+        .stats { display: flex; gap: 20px; margin: 10px 0; }
+        .stat { padding: 10px; background: #e9ecef; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Comprehensive Crash Diagnostic</h1>
+        <p>This test isolates each component to find the crash source.</p>
+        
+        <div class="stats">
+            <div class="stat">Backend: <span id="backend-status">Checking...</span></div>
+            <div class="stat">Memory: <span id="memory-stat">-</span></div>
+            <div class="stat">Time: <span id="time-stat">-</span></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test 1: Backend Connection</h3>
+            <button onclick="test1Backend()">Test Backend Health</button>
+            <div id="test1-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test 2: Single File Upload</h3>
+            <input type="file" id="test2-file" accept=".pdf">
+            <button onclick="test2SingleFile()">Process Single File</button>
+            <div id="test2-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test 3: Sequential File Processing (Simulate 10 files)</h3>
+            <button onclick="test3Sequential()" id="test3-btn">Start Sequential Test</button>
+            <div class="progress">
+                <div class="progress-bar"><div class="progress-fill" id="test3-progress"></div></div>
+            </div>
+            <div id="test3-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test 4: Stress Test - Rapid State Updates</h3>
+            <button onclick="test4RapidUpdates()" id="test4-btn">Start Rapid Updates</button>
+            <div id="test4-counter">Updates: 0</div>
+            <div id="test4-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test 5: Full Simulation (65 files)</h3>
+            <button onclick="test5FullSimulation()" id="test5-btn">Start Full Simulation</button>
+            <div class="progress">
+                <div class="progress-bar"><div class="progress-fill" id="test5-progress"></div></div>
+            </div>
+            <div id="test5-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test 6: Memory Pressure Test</h3>
+            <button onclick="test6MemoryPressure()" id="test6-btn">Start Memory Test</button>
+            <div id="test6-result"></div>
+        </div>
+        
+        <h3>📋 Event Log:</h3>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        const logEl = document.getElementById('log');
+        let isRunning = false;
+        
+        function log(msg, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'warn' ? '⚠️' : 'ℹ️';
+            const line = `[${time}] ${prefix} ${msg}`;
+            logEl.textContent += line + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(line);
+        }
+        
+        function updateStats() {
+            if (performance && performance.memory) {
+                const mem = performance.memory;
+                document.getElementById('memory-stat').textContent = 
+                    `${(mem.usedJSHeapSize / 1024 / 1024).toFixed(1)}MB / ${(mem.totalJSHeapSize / 1024 / 1024).toFixed(1)}MB`;
+            }
+            document.getElementById('time-stat').textContent = new Date().toLocaleTimeString();
+        }
+        
+        setInterval(updateStats, 1000);
+        updateStats();
+        
+        async function test1Backend() {
+            log('Test 1: Checking backend health...');
+            const resultEl = document.getElementById('test1-result');
+            
+            try {
+                const response = await fetch('http://localhost:8000/health');
+                const data = await response.json();
+                
+                document.getElementById('backend-status').textContent = data.status;
+                resultEl.innerHTML = `<div class="result success">✅ Backend OK - ${data.status} (v${data.version})</div>`;
+                log(`Backend healthy: ${JSON.stringify(data)}`, 'success');
+            } catch (e) {
+                document.getElementById('backend-status').textContent = 'ERROR';
+                resultEl.innerHTML = `<div class="result error">❌ Backend Error: ${e.message}</div>`;
+                log(`Backend error: ${e.message}`, 'error');
+            }
+        }
+        
+        async function test2SingleFile() {
+            const fileInput = document.getElementById('test2-file');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Please select a PDF file');
+                return;
+            }
+            
+            log(`Test 2: Processing single file: ${file.name} (${(file.size/1024/1024).toFixed(1)}MB)`);
+            const resultEl = document.getElementById('test2-result');
+            resultEl.innerHTML = '<div class="result info">Processing...</div>';
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                log('Uploading to backend...');
+                const response = await fetch('http://localhost:8000/api/documents/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resultEl.innerHTML = `<div class="result success">✅ Success! ${data.total_chunks} chunks in ${data.processing_time_ms}ms</div>`;
+                    log(`File processed: ${data.total_chunks} chunks`, 'success');
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (e) {
+                resultEl.innerHTML = `<div class="result error">❌ Error: ${e.message}</div>`;
+                log(`Error: ${e.message}`, 'error');
+            }
+        }
+        
+        async function test3Sequential() {
+            if (isRunning) return;
+            isRunning = true;
+            document.getElementById('test3-btn').disabled = true;
+            
+            log('Test 3: Starting sequential file simulation (10 files)...');
+            const resultEl = document.getElementById('test3-result');
+            const progressEl = document.getElementById('test3-progress');
+            
+            try {
+                for (let i = 1; i <= 10; i++) {
+                    // Simulate file reading
+                    const size = 5 * 1024 * 1024; // 5MB
+                    const blob = new Blob(['x'.repeat(size)]);
+                    
+                    log(`Processing file ${i}/10 (${(size/1024/1024).toFixed(1)}MB)`);
+                    
+                    // Create form data
+                    const formData = new FormData();
+                    formData.append('file', blob, `test-file-${i}.txt`);
+                    
+                    // Send to backend
+                    const response = await fetch('http://localhost:8000/api/documents/process', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`File ${i}: HTTP ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    log(`File ${i}: ${data.total_chunks} chunks`);
+                    
+                    // Update progress
+                    progressEl.style.width = `${(i/10)*100}%`;
+                    
+                    // Small delay between files
+                    await new Promise(r => setTimeout(r, 100));
+                }
+                
+                resultEl.innerHTML = '<div class="result success">✅ Sequential test completed (10 files)</div>';
+                log('Sequential test completed', 'success');
+            } catch (e) {
+                resultEl.innerHTML = `<div class="result error">❌ Failed: ${e.message}</div>`;
+                log(`Sequential test failed: ${e.message}`, 'error');
+            } finally {
+                isRunning = false;
+                document.getElementById('test3-btn').disabled = false;
+            }
+        }
+        
+        async function test4RapidUpdates() {
+            if (isRunning) return;
+            isRunning = true;
+            document.getElementById('test4-btn').disabled = true;
+            
+            log('Test 4: Starting rapid state updates...');
+            const resultEl = document.getElementById('test4-result');
+            const counterEl = document.getElementById('test4-counter');
+            
+            try {
+                let counter = 0;
+                const maxUpdates = 1000;
+                
+                for (let i = 0; i < maxUpdates; i++) {
+                    counter++;
+                    counterEl.textContent = `Updates: ${counter}`;
+                    
+                    // Simulate DOM updates like React does
+                    resultEl.innerHTML = `<div class="result info">Update ${counter}/${maxUpdates}</div>`;
+                    
+                    if (i % 100 === 0) {
+                        log(`Rapid updates: ${i}/${maxUpdates}`);
+                        await new Promise(r => setTimeout(r, 1));
+                    }
+                }
+                
+                resultEl.innerHTML = '<div class="result success">✅ Rapid updates completed (1000 updates)</div>';
+                log('Rapid updates test completed', 'success');
+            } catch (e) {
+                resultEl.innerHTML = `<div class="result error">❌ Failed: ${e.message}</div>`;
+                log(`Rapid updates failed: ${e.message}`, 'error');
+            } finally {
+                isRunning = false;
+                document.getElementById('test4-btn').disabled = false;
+            }
+        }
+        
+        async function test5FullSimulation() {
+            if (isRunning) return;
+            isRunning = true;
+            document.getElementById('test5-btn').disabled = true;
+            
+            log('Test 5: Starting full simulation (65 files)...');
+            const resultEl = document.getElementById('test5-result');
+            const progressEl = document.getElementById('test5-progress');
+            
+            const totalFiles = 65;
+            const processedDocs = [];
+            
+            try {
+                for (let i = 1; i <= totalFiles; i++) {
+                    // Create test file (varies size)
+                    const size = Math.random() > 0.5 ? 5 * 1024 * 1024 : 1 * 1024 * 1024;
+                    const blob = new Blob(['Test content for file ' + i + ': ' + 'x'.repeat(1000)]);
+                    
+                    const formData = new FormData();
+                    formData.append('file', blob, `simulated-file-${i}.txt`);
+                    
+                    log(`[${i}/${totalFiles}] Sending to backend...`);
+                    
+                    const response = await fetch('http://localhost:8000/api/documents/process', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        processedDocs.push(data);
+                        
+                        if (i % 10 === 0) {
+                            log(`Progress: ${i}/${totalFiles} files (${processedDocs.reduce((a,d) => a + d.total_chunks, 0)} total chunks)`);
+                        }
+                    }
+                    
+                    // Update progress
+                    progressEl.style.width = `${(i/totalFiles)*100}%`;
+                    
+                    // Yield between files
+                    await new Promise(r => setTimeout(r, 50));
+                    
+                    // Heartbeat every 5 files
+                    if (i % 5 === 0) {
+                        log(`💓 Heartbeat: ${i}/${totalFiles}`);
+                    }
+                }
+                
+                const totalChunks = processedDocs.reduce((a, d) => a + d.total_chunks, 0);
+                resultEl.innerHTML = `<div class="result success">✅ Full simulation completed! ${totalFiles} files, ${totalChunks} chunks</div>`;
+                log(`Full simulation completed: ${totalFiles} files, ${totalChunks} chunks`, 'success');
+            } catch (e) {
+                resultEl.innerHTML = `<div class="result error">❌ Failed at file ${processedDocs.length + 1}: ${e.message}</div>`;
+                log(`Full simulation failed: ${e.message}`, 'error');
+            } finally {
+                isRunning = false;
+                document.getElementById('test5-btn').disabled = false;
+            }
+        }
+        
+        async function test6MemoryPressure() {
+            if (isRunning) return;
+            isRunning = true;
+            document.getElementById('test6-btn').disabled = true;
+            
+            log('Test 6: Starting memory pressure test...');
+            const resultEl = document.getElementById('test6-result');
+            
+            try {
+                const arrays = [];
+                
+                for (let i = 0; i < 20; i++) {
+                    // Create large array similar to chunks
+                    const largeArray = new Array(500).fill(null).map((_, idx) => ({
+                        id: `chunk-${idx}`,
+                        text: 'Document content '.repeat(100),
+                        metadata: { index: idx, size: 1000 },
+                        embedding: new Array(384).fill(0.1) // 384-dim embedding
+                    }));
+                    
+                    arrays.push(largeArray);
+                    
+                    const memInfo = performance.memory ? 
+                        `${(performance.memory.usedJSHeapSize/1024/1024).toFixed(1)}MB` : 'N/A';
+                    
+                    log(`Created array ${i+1}/20 - Memory: ${memInfo}`);
+                    
+                    // Update UI
+                    resultEl.innerHTML = `<div class="result info">Created ${i+1}/20 arrays - Memory: ${memInfo}</div>`;
+                    
+                    // Yield
+                    await new Promise(r => setTimeout(r, 100));
+                }
+                
+                resultEl.innerHTML = '<div class="result success">✅ Memory pressure test completed (20 large arrays)</div>';
+                log('Memory pressure test completed', 'success');
+            } catch (e) {
+                resultEl.innerHTML = `<div class="result error">❌ Memory error: ${e.message}</div>`;
+                log(`Memory test failed: ${e.message}`, 'error');
+            } finally {
+                isRunning = false;
+                document.getElementById('test6-btn').disabled = false;
+            }
+        }
+        
+        // Auto-run Test 1 on load
+        window.onload = () => {
+            log('🔍 Comprehensive Crash Diagnostic Loaded');
+            test1Backend();
+        };
+    </script>
+</body>
+</html>

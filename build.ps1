@@ -9,7 +9,7 @@ Write-Host ""
 # Check if Node.js is installed
 try {
     $nodeVersion = node --version
-    $npmVersion = npm --version
+    $npmVersion = & npm.cmd --version
     Write-Host "[1/4] Checking Node.js version..." -ForegroundColor Yellow
     Write-Host "Node.js: $nodeVersion" -ForegroundColor Green
     Write-Host "npm: $npmVersion" -ForegroundColor Green
@@ -24,7 +24,7 @@ try {
 # Check if node_modules exists
 if (-Not (Test-Path "node_modules")) {
     Write-Host "[2/4] Installing dependencies..." -ForegroundColor Yellow
-    npm install
+    & npm.cmd install
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[ERROR] Failed to install dependencies!" -ForegroundColor Red
         Read-Host "Press Enter to exit"
@@ -37,7 +37,7 @@ Write-Host ""
 
 # Build the project
 Write-Host "[3/4] Building production bundle..." -ForegroundColor Yellow
-npm run build
+& npm.cmd run build
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] Build failed!" -ForegroundColor Red
     Read-Host "Press Enter to exit"

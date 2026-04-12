@@ -1,4 +1,4 @@
-import { LLMConfig, extractJson, ParaphraseResponse, GrammarError, SummaryLength, SummaryFormat, CitationResponse, CitationStyle, ChatMessage, GrammarCheckResult, ContextEnhancement, PageIndexPromptNode, PageIndexSelection } from '../utils';
+import { LLMConfig, extractJson, ParaphraseResponse, GrammarError, SummaryLength, SummaryFormat, CitationResponse, CitationStyle, ChatMessage, GrammarCheckResult, ContextEnhancement, PageIndexPromptNode, PageIndexSelection, CITATION_STYLES_LIST } from '../utils';
 import { shouldUseReasoningPromptsForContext } from '../utils/modelCapabilities';
 
 // --- Prompts (Simplified for generic Llama-3/Mistral instruction following) ---
@@ -36,55 +36,70 @@ GUIDELINES:
 IMPORTANT: Provide ONLY the JSON object. Failure to do so will break the system.`;
 
 const GRAMMAR_SYS_PROMPT = `You are a grammar and style checker. 
-CRITICAL: You MUST respond with ONLY valid JSON in this exact format:
+CRITICAL: You MUST respond with ONLY valid JSON.
+Never include thinking traces, preamble, or markdown.
+Start your response with { and end with }.
+
+JSON FORMAT:
 {
   "errors": [{"id": "1", "original": "error text", "suggestion": "corrected text", "reason": "explanation", "type": "grammar", "context": "surrounding sentence"}],
   "forecast": ["Future writing tip 1", "Future writing tip 2"]
 }
 
-Do not include any other text, explanations, or markdown. Just the JSON object.
 If no errors found, use "errors": [].`;
 
 const ENHANCED_GRAMMAR_SYS_PROMPT = `You are a grammar and style checker with advanced analytical capabilities.
 
-SYSTEMATIC ANALYSIS - Think through these steps:
+CRITICAL: You MUST respond with ONLY valid JSON.
+Never include "Thinking Process", "Analyze the Request", or any other preamble.
+Never use markdown code blocks unless the JSON is inside them.
+Never use <think> or similar tokens.
+
+SYSTEMATIC ANALYSIS (INTERNAL ONLY):
 1. Read the text for comprehension and context
 2. Identify grammar, spelling, and style issues systematically
 3. Evaluate severity and contextual appropriateness
 4. Consider writer's intent and audience
 5. Analyze patterns for future improvement predictions
 
-CRITICAL: You MUST respond with ONLY valid JSON in this exact format:
+JSON FORMAT:
 {
   "errors": [{"id": "1", "original": "error text", "suggestion": "corrected text", "reason": "explanation", "type": "grammar", "context": "surrounding sentence"}],
   "forecast": ["Pattern-based tip 1", "Improvement suggestion 2"]
 }
 
-Do not include any other text, explanations, or markdown. Just the JSON object.`;
+IMPORTANT: Start your response directly with { and end with }. No other text.`;
+
+const CITATION_STYLES_TEXT = CITATION_STYLES_LIST.join(', ');
 
 const CITATION_SYS_PROMPT = `You are a citation generator.
-CRITICAL: You MUST respond with ONLY valid JSON in this exact format:
+CRITICAL: You MUST respond with ONLY valid JSON.
+Never include thinking traces or preamble.
+Start your response with { and end with }.
+
+JSON FORMAT:
 {"formatted_citation": "complete citation", "bibtex": "bibtex entry", "components": {"author": "author name", "date": "publication date", "title": "title", "source": "journal/publisher", "doi_or_url": "doi or url"}}
 
-Supported styles: APA 7, MLA 9, Chicago, Harvard, IEEE, Vancouver, Turabian, ACS, AMA, ASA
-
-Do not include any other text, explanations, or markdown. Just the JSON object.`;
+Supported styles: ${CITATION_STYLES_TEXT}`;
 
 const ENHANCED_CITATION_SYS_PROMPT = `You are a citation generator with advanced analytical capabilities.
 
-SYSTEMATIC CITATION PROCESS - Think through these steps:
+CRITICAL: You MUST respond with ONLY valid JSON.
+Never include "Thinking Process", "Analyze the Request", or any other internal reasoning.
+Never use <think> or similar tokens.
+Start your response with { and end with }.
+
+SYSTEMATIC CITATION PROCESS (INTERNAL ONLY):
 1. Analyze the source information provided
 2. Identify the source type and appropriate format
 3. Extract bibliographic elements systematically
 4. Apply citation style rules with precision
 5. Verify formatting accuracy and completeness
 
-Supported styles: APA 7, MLA 9, Chicago, Harvard, IEEE, Vancouver, Turabian, ACS, AMA, ASA
-
-CRITICAL: You MUST respond with ONLY valid JSON in this exact format:
+JSON FORMAT:
 {"formatted_citation": "complete citation", "bibtex": "bibtex entry", "components": {"author": "author name", "date": "publication date", "title": "title", "source": "journal/publisher", "doi_or_url": "doi or url"}}
 
-Do not include any other text, explanations, or markdown. Just the JSON object.`;
+Supported styles: ${CITATION_STYLES_TEXT}`;
 
 export class LocalLlmService {
   constructor(private config: LLMConfig) {}
@@ -675,21 +690,29 @@ export class LocalLlmService {
   }
 
   async summarize(text: string, length: SummaryLength, format: SummaryFormat, language: string = 'English', enhancement?: ContextEnhancement): Promise<string> {
-    const prompt = `Summarize this text in ${language}. Length: ${length}. Format: ${format}. Text: "${text}"`;
+    const prompt = `Summarize this text in ${language}. Length: ${length}. Format: ${format}. 
+    
+    TEXT TO SUMMARIZE:
+    "${text}"`;
     
     const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
     const system = useReasoning ? 
-      `You are a summarization expert with advanced comprehension abilities.
+      `You are a summarization expert. 
       
-      SYSTEMATIC PROCESS - Think through these steps:
+      CRITICAL: You MUST return ONLY the summary content.
+      Never include "Thinking Process", "Analyze the Request", or any other internal reasoning steps.
+      Never use <|thinking|> tokens.
+      Do not include any chat preamble or meta-commentary.
+      
+      SYSTEMATIC PROCESS (INTERNAL ONLY):
       1. Read and comprehend the full text thoroughly
       2. Identify main themes and key arguments
       3. Determine hierarchical importance of information
       4. Structure the summary for clarity and usefulness
-      5. Verify essential information is captured
       
-      Return the summary directly in the requested format and language.` :
-      "You are a helpful summarizer. Return the summary directly.";
+      OUTPUT FORMAT:
+      Return the final summary directly in ${format} format using ${language}.` :
+      "You are a helpful summarizer. Return the summary directly without any preamble or thinking traces.";
       
     return await this.generate(prompt, system, false);
   }
@@ -705,7 +728,7 @@ export class LocalLlmService {
   }
 
   // Simple chat wrapper
-  async chat(history: ChatMessage[], newMessage: string, language: string = 'English', enhancement?: ContextEnhancement): Promise<string> {
+  async chat(history: ChatMessage[], newMessage: string, language: string = 'English', enhancement?: ContextEnhancement, images?: string[]): Promise<string> {
     const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
     
     const system = useReasoning ? 
@@ -725,9 +748,19 @@ export class LocalLlmService {
       Reply in ${language}.` :
       `You are a professional writing assistant. Be precise, concise, and helpful. Reply in ${language}.`;
     
+    // Build multi-modal message if images are provided
+    const userMessageContent: any = images && images.length > 0 
+      ? [
+          { type: 'text', text: newMessage },
+          ...images.map(img => ({
+            type: 'image_url',
+            image_url: { url: img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}` }
+          }))
+        ]
+      : newMessage;
+
     if (this.config.provider === 'ollama') {
        const controller = new AbortController();
-       // Increased timeout to 300 seconds for chat (models can be slower with conversation context)
        const timeoutId = setTimeout(() => controller.abort(), 300000);
        try {
         const response = await fetch(`${this.config.baseUrl}/api/chat`, {
@@ -738,11 +771,11 @@ export class LocalLlmService {
             messages: [
                { role: 'system', content: system },
                ...history.map(m => ({ role: m.role, content: m.content })),
-               { role: 'user', content: newMessage }
+               { role: 'user', content: newMessage, images: images } // Ollama uses top-level images array
             ],
             stream: false,
             options: {
-              num_predict: this.config.maxCompletionTokens // Added max_tokens for Ollama
+              num_predict: this.config.maxCompletionTokens
             }
           }),
           signal: controller.signal
@@ -761,15 +794,15 @@ export class LocalLlmService {
         return "";
       }
     } else {
-      // LM Studio - also increase timeout for chat
+      // LM Studio - OpenAI compatibility
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 300000);
       
       try {
         const msgs = [
           { role: 'system', content: system },
-          ...history,
-          { role: 'user', content: newMessage }
+          ...history.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content })),
+          { role: 'user', content: userMessageContent }
         ];
         
         const response = await fetch(`${this.config.baseUrl}/v1/chat/completions`, {
@@ -779,7 +812,7 @@ export class LocalLlmService {
             model: this.config.modelName,
             messages: msgs,
             temperature: 0.3,
-            max_tokens: this.config.maxCompletionTokens, // Replaced hardcoded value
+            max_tokens: this.config.maxCompletionTokens,
             stream: false
           }),
           signal: controller.signal
@@ -803,7 +836,7 @@ export class LocalLlmService {
   }
 
   // Streaming Chat implementation
-  async chatStream(history: ChatMessage[], newMessage: string, onToken: (token: string) => void, language: string = 'English', enhancement?: ContextEnhancement): Promise<string> {
+  async chatStream(history: ChatMessage[], newMessage: string, onToken: (token: string) => void, language: string = 'English', enhancement?: ContextEnhancement, images?: string[]): Promise<string> {
     const useReasoning = shouldUseReasoningPromptsForContext(this.config.modelName, this.config.contextLimit);
     
     const system = useReasoning ? 
@@ -812,14 +845,30 @@ export class LocalLlmService {
       Analyze the provided financial context and synthesize a coherent answer. Reply in ${language}.` :
       `You are a professional writing assistant. Be precise, concise, and helpful. Reply in ${language}.`;
     
+    const userMessageContent: any = images && images.length > 0 
+      ? [
+          { type: 'text', text: newMessage },
+          ...images.map(img => ({
+            type: 'image_url',
+            image_url: { url: img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}` }
+          }))
+        ]
+      : newMessage;
+
     const messages = [
       { role: 'system', content: system },
       ...history.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content })),
-      { role: 'user', content: newMessage }
+      { role: 'user', content: userMessageContent }
     ];
 
     if (this.config.provider === 'ollama') {
-      return this.streamOllama(messages, onToken);
+      // Ollama streaming with images
+      const ollamaMessages = [
+        { role: 'system', content: system },
+        ...history.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.content })),
+        { role: 'user', content: newMessage, images: images }
+      ];
+      return this.streamOllama(ollamaMessages, onToken);
     } else {
       return this.streamOpenAICompat(messages, onToken);
     }
@@ -835,7 +884,7 @@ export class LocalLlmService {
         stream: true,
         options: { 
           num_ctx: this.config.contextLimit,
-          num_predict: this.config.maxCompletionTokens // Added max_tokens for Ollama
+          num_predict: this.config.maxCompletionTokens
         }
       })
     });
@@ -846,15 +895,18 @@ export class LocalLlmService {
 
     let fullText = '';
     const decoder = new TextDecoder();
+    let buffer = '';
     
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n').filter(l => l.trim());
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
       
       for (const line of lines) {
+        if (!line.trim()) continue;
         try {
           const data = JSON.parse(line);
           if (data.message?.content) {
@@ -864,7 +916,7 @@ export class LocalLlmService {
           }
           if (data.done) break;
         } catch (e) {
-          console.warn('Failed to parse Ollama chunk', e);
+          console.warn('Failed to parse Ollama chunk', e, line);
         }
       }
     }
@@ -880,7 +932,7 @@ export class LocalLlmService {
         messages,
         stream: true,
         temperature: 0.3,
-        max_tokens: this.config.maxCompletionTokens // Replaced hardcoded value
+        max_tokens: this.config.maxCompletionTokens
       })
     });
 
@@ -890,17 +942,21 @@ export class LocalLlmService {
 
     let fullText = '';
     const decoder = new TextDecoder();
+    let buffer = '';
     
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n');
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
       
       for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const dataStr = line.replace('data: ', '').trim();
+        const trimmedLine = line.trim();
+        if (!trimmedLine || !trimmedLine.startsWith('data: ')) continue;
+        
+        const dataStr = trimmedLine.replace('data: ', '').trim();
         if (dataStr === '[DONE]') break;
         
         try {
@@ -911,7 +967,7 @@ export class LocalLlmService {
             onToken(token);
           }
         } catch (e) {
-          // Sometimes partial JSON chunks happen in SSE
+          // Silent catch for partial JSON chunks
         }
       }
     }

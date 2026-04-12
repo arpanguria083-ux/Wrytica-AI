@@ -1,25 +1,43 @@
-import React, { useState } from 'react';
-import { Layers, CloudUpload, FilePlus, Loader2, Save, Clipboard } from 'lucide-react';
+﻿import React, { useState, useRef, useCallback } from 'react';
+import {
+  Layers, CloudUpload, FilePlus, Loader2, Save, Clipboard,
+  AlertTriangle, CheckCircle, XCircle, Pause, Play, X
+} from 'lucide-react';
 import { OCRService, OcrResult, OcrProgress } from '../services/ocrService';
 import { useAppContext } from '../contexts/AppContext';
 import { KnowledgeBaseService } from '../services/knowledgeBaseService';
 import { generateId } from '../utils';
 import { isVisionCapable } from '../utils/modelCapabilities';
+import { documentProcessorAPI } from '../services/backendApi';
+import { useBackendStatus } from '../hooks/useBackendStatus';
+import { StabilityManager, JobStatus } from '../services/stabilityManager';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 type DisplayResult = OcrResult & {
-  stage: 'pending' | 'processing' | 'done' | 'error' | 'saved';
+  jobId?: string;
+  stage: 'pending' | 'queued' | 'processing' | 'done' | 'error' | 'saved' | 'cancelled';
   progress: number;
   error?: string;
+  renderMode?: 'text' | 'markdown';
+  processingMode?: string;
+  processingTimeMs?: number;
+  layoutSummary?: string;
+  estimatedRemainingSec?: number;
 };
 
 export const OCRTool: React.FC = () => {
   const { knowledgeBase, addKnowledgeDocument, recordToolHistory, config, language } = useAppContext();
+  const backendStatus = useBackendStatus();
 
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<DisplayResult[]>([]);
   const [running, setRunning] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
-  const [ocrMode, setOcrMode] = useState<'local' | 'vision'>('local');
+  const [ocrMode, setOcrMode] = useState<'pdfplumber' | 'chandra' | 'mineru'>('pdfplumber');
+  const [browserHealthWarning, setBrowserHealthWarning] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const jobIdsRef = useRef<Map<string, string>>(new Map());  // Map filename -> jobId
 
   const handleFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
     const list = event.target.files ? Array.from(event.target.files) : [];
@@ -40,37 +58,122 @@ export const OCRTool: React.FC = () => {
     }));
   };
 
+  const isPdfFile = (file: File) =>
+    file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+  /**
+   * Start OCR jobs via stable job queue
+   */
   const handleRunOCR = async () => {
     if (!files.length) return;
+
     setRunning(true);
-    setStatusMessage('Running OCR on selected files...');
-    try {
-      const extractor = ocrMode === 'vision'
-        ? OCRService.ocrWithVision(files, config, language, (progress) => updateProgress(progress))
-        : OCRService.ocrFiles(files, (progress) => updateProgress(progress));
-      const extracted = await extractor;
-      
-      let hasError = false;
-      setResults(extracted.map(result => {
-        if (!result.text) hasError = true;
-        return {
-          ...result,
-          stage: result.text ? 'done' : 'error',
-          progress: 1,
-          error: result.text ? undefined : 'Failed to extract text. Check console or model logs.'
-        };
-      }));
-      
-      setStatusMessage(hasError 
-        ? `OCR finished with errors. Some files could not be processed.` 
-        : `${ocrMode === 'vision' ? 'Vision OCR' : 'On-device OCR'} completed. Save results to your knowledge base.`);
-    } catch (error: any) {
-      console.error('OCR failed', error);
-      setStatusMessage(`OCR process failed completely: ${error.message || 'Unknown error'}`);
-    } finally {
-      setRunning(false);
+    setBrowserHealthWarning(false);
+    setStatusMessage('Starting OCR jobs...');
+    jobIdsRef.current.clear();
+
+    // Initialize results for all files
+    setResults(files.map(file => ({
+      fileName: file.name,
+      text: '',
+      mimeType: file.type,
+      stage: 'queued' as const,
+      progress: 0,
+    })));
+
+    // Start OCR job for each file
+    for (const file of files) {
+      try {
+        const result = await StabilityManager.startOCRJob(file, ocrMode);
+        jobIdsRef.current.set(file.name, result.job_id);
+
+        setStatusMessage(`${file.name}: Job started (${result.file_size_mb}MB)`);
+
+        // Poll this job in background (non-blocking)
+        pollSingleJobSafely(file.name, result.job_id);
+      } catch (error: any) {
+        console.error(`Failed to start OCR for ${file.name}:`, error);
+        setResults(prev => prev.map(r =>
+          r.fileName === file.name
+            ? { ...r, stage: 'error', error: error.message }
+            : r
+        ));
+      }
     }
+
+    setRunning(false);
   };
+
+  /**
+   * Poll a single job safely with browser health checks
+   */
+  const pollSingleJobSafely = useCallback(async (fileName: string, jobId: string) => {
+    try {
+      await StabilityManager.pollJobSafely(
+        jobId,
+        (jobStatus: JobStatus) => {
+          // Update result with job status
+          setResults(prev => prev.map(r => {
+            if (r.fileName !== fileName) return r;
+
+            // Map backend status to display stage
+            const stageMap: Record<string, DisplayResult['stage']> = {
+              completed: 'done',
+              failed: 'error',
+              timeout: 'error',
+              pending: 'pending',
+              queued: 'queued',
+              waiting_resources: 'queued',
+              processing: 'processing',
+              cancelled: 'cancelled',
+            };
+            return {
+              ...r,
+              jobId,
+              progress: jobStatus.progress,
+              stage: stageMap[jobStatus.status] ?? 'processing',
+              estimatedRemainingSec: jobStatus.estimated_remaining_sec,
+              error: jobStatus.error,
+              text: jobStatus.output?.markdown || '',
+              processingMode: jobStatus.output?.processing_mode,
+              processingTimeMs: jobStatus.output?.processing_time_ms,
+              renderMode: jobStatus.output?.markdown ? 'markdown' : undefined,
+            };
+          }));
+        },
+        (isPausedByHealth) => {
+          if (isPausedByHealth) {
+            setBrowserHealthWarning(true);
+          }
+        }
+      );
+    } catch (error: any) {
+      console.error(`Job polling failed for ${fileName}:`, error);
+      setResults(prev => prev.map(r =>
+        r.fileName === fileName ? { ...r, stage: 'error', error: error.message } : r
+      ));
+    }
+  }, []);
+
+  /**
+   * Cancel an OCR job
+   */
+  const cancelOCRJob = useCallback(async (fileName: string) => {
+    const jobId = jobIdsRef.current.get(fileName);
+    if (!jobId) return;
+
+    try {
+      await StabilityManager.cancelJob(jobId);
+      StabilityManager.clearJobState(jobId);
+
+      setResults(prev => prev.map(r =>
+        r.fileName === fileName ? { ...r, stage: 'cancelled' } : r
+      ));
+    } catch (error: any) {
+      console.error(`Failed to cancel job for ${fileName}:`, error);
+    }
+  }, []);
+
 
   const handleSaveResult = (result: DisplayResult) => {
     if (!result.text) return;
@@ -78,7 +181,11 @@ export const OCRTool: React.FC = () => {
       title: `OCR: ${result.fileName}`,
       content: result.text,
       source: 'OCR import',
-      tags: ['ocr', result.mimeType.includes('pdf') ? 'pdf' : 'image']
+      tags: [
+        'ocr',
+        result.mimeType.includes('pdf') ? 'pdf' : 'image',
+        ...(result.renderMode === 'markdown' ? ['deep-extract'] : [])
+      ]
     });
     addKnowledgeDocument(doc);
     recordToolHistory({
@@ -104,7 +211,11 @@ export const OCRTool: React.FC = () => {
           title: `OCR: ${result.fileName}`,
           content: result.text,
           source: 'OCR import',
-          tags: ['ocr', result.mimeType.includes('pdf') ? 'pdf' : 'image']
+          tags: [
+            'ocr',
+            result.mimeType.includes('pdf') ? 'pdf' : 'image',
+            ...(result.renderMode === 'markdown' ? ['deep-extract'] : [])
+          ]
         });
         addKnowledgeDocument(doc);
         recordToolHistory({
@@ -132,16 +243,35 @@ export const OCRTool: React.FC = () => {
     }
   };
 
-  const isVisionSupported = config.provider === 'gemini' || isVisionCapable((config as any).model);
-  const isRunDisabled = !files.length || running || (ocrMode === 'vision' && !isVisionSupported);
+  const isRunDisabled = !files.length || running;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-10">
+      {/* Browser Health Warning */}
+      {browserHealthWarning && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 flex items-start gap-3">
+          <AlertTriangle size={20} className="text-amber-600 dark:text-amber-400 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-amber-900 dark:text-amber-100">Browser Performance Degraded</p>
+            <p className="text-sm text-amber-800 dark:text-amber-200 mt-1">
+              Your system is under heavy load. OCR processing has been temporarily paused to keep the browser responsive.
+            </p>
+            <button
+              onClick={() => setIsPaused(!isPaused)}
+              className="mt-2 px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 text-sm flex items-center gap-2"
+            >
+              {isPaused ? <Play size={14} /> : <Pause size={14} />}
+              {isPaused ? 'Resume' : 'Pause'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Bulk OCR</h2>
+          <h2 className="text-3xl font-bold text-slate-900 dark:text-white">OCR & Document Extraction</h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm">
-            Upload images or scanned PDFs, extract text (via on-device OCR), and auto-index the results into your knowledge base.
+            Upload PDFs or images. Processing happens safely in the background with real-time progress tracking.
           </p>
         </div>
         <button
@@ -150,39 +280,37 @@ export const OCRTool: React.FC = () => {
           className="flex items-center gap-2 px-5 py-3 bg-primary-600 text-white rounded-2xl shadow hover:bg-primary-700 disabled:opacity-50"
         >
           {running ? <Loader2 className="animate-spin" size={16} /> : <CloudUpload size={16} />}
-          <span>{running ? 'Processing...' : 'Run OCR'}</span>
+          <span>{running ? 'Starting Jobs...' : 'Start OCR'}</span>
         </button>
       </div>
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-          <span className="uppercase tracking-wide text-[10px]">Mode:</span>
+          <span className="uppercase tracking-wide text-[10px]">Engine:</span>
           <button
-            onClick={() => setOcrMode('local')}
-            className={`px-3 py-1 rounded-full border text-[11px] font-semibold ${ocrMode === 'local' ? 'border-primary-500 bg-primary-50 text-primary-700' : 'border-slate-200 bg-white text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300'}`}
+            onClick={() => setOcrMode('pdfplumber')}
+            className={`px-3 py-1 rounded-full border text-[11px] font-semibold ${ocrMode === 'pdfplumber' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:border-primary-400' : 'border-slate-200 bg-white text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300'}`}
           >
-            On-device OCR
+            Fast (pdfplumber)
           </button>
           <button
-            onClick={() => setOcrMode('vision')}
-            className={`px-3 py-1 rounded-full border text-[11px] font-semibold ${ocrMode === 'vision' ? 'border-primary-500 bg-primary-50 text-primary-700' : 'border-slate-200 bg-white text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300'}`}
+            onClick={() => setOcrMode('chandra')}
+            className={`px-3 py-1 rounded-full border text-[11px] font-semibold ${ocrMode === 'chandra' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:border-primary-400' : 'border-slate-200 bg-white text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300'}`}
           >
-            Vision LLM ({config.provider === 'gemini' ? 'Gemini' : 'Local'})
+            Balanced (Chandra)
           </button>
-          <span className="text-[11px] text-slate-400 italic">
-            {ocrMode === 'vision' ? 'Uses Gemini Vision or a configured /v1/vision endpoint.' : 'Uses Tesseract/pdf.js locally in your browser.'}
-          </span>
-          <span className="text-[11px] text-slate-400 italic">
-            Current model: {(config as any).model || config.provider}
+          <button
+            onClick={() => setOcrMode('mineru')}
+            className={`px-3 py-1 rounded-full border text-[11px] font-semibold ${ocrMode === 'mineru' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:border-primary-400' : 'border-slate-200 bg-white text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300'}`}
+          >
+            Advanced (MinerU)
+          </button>
+          <span className="text-[11px] text-slate-400 italic ml-auto">
+            {ocrMode === 'pdfplumber' && 'Fast, basic text extraction'}
+            {ocrMode === 'chandra' && 'Balanced speed and quality with layout awareness'}
+            {ocrMode === 'mineru' && 'Best for complex PDFs with tables and formulas'}
           </span>
         </div>
-        
-        {!isVisionSupported && ocrMode === 'vision' && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-400">
-            <div className="font-semibold mb-1">Vision Not Supported</div>
-            The currently selected model <strong>({(config as any).model || 'unknown'})</strong> is a text-only model. It cannot process images or PDFs. Please switch to "On-device OCR", or select a vision-capable multi-modal model (like LLaVA, Pixtral, Qwen-VL, Moondream, or Gemini).
-          </div>
-        )}
       </div>
 
       <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-dark-surface p-6 space-y-4">
@@ -197,7 +325,7 @@ export const OCRTool: React.FC = () => {
           />
         </label>
         <div className="text-xs text-slate-400">
-          Choose scanned documents, receipts, slide decks, or photos. OCR supports PNG/JPG and PDF; extracted text is stored as knowledge base documents for RAG.
+          Choose scanned documents, receipts, slide decks, or photos. OCR supports PNG, JPG, and PDF. Extracted text is stored as Knowledge Base documents for RAG.
         </div>
       </div>
 
@@ -211,19 +339,69 @@ export const OCRTool: React.FC = () => {
             <div key={result.fileName} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-dark-surface p-5 space-y-3 shadow-sm">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold text-slate-800 dark:text-white">{result.fileName}</div>
-            <div className="text-[11px] uppercase tracking-wide">
-              {result.stage === 'saved' ? 'Saved to KB' : result.stage}
-            </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-[11px] uppercase tracking-wide font-medium flex items-center gap-2">
+                    {result.stage === 'done' && <CheckCircle size={14} className="text-green-600" />}
+                    {result.stage === 'processing' && <Loader2 size={14} className="text-blue-600 animate-spin" />}
+                    {result.stage === 'error' && <XCircle size={14} className="text-red-600" />}
+                    {result.stage === 'cancelled' && <X size={14} className="text-slate-600" />}
+                    {result.stage === 'queued' && <Loader2 size={14} className="text-slate-500 animate-spin" />}
+                    <span>{result.stage === 'done' ? 'Done' : result.stage}</span>
+                  </div>
+                  {(result.stage === 'processing' || result.stage === 'queued') && (
+                    <button
+                      onClick={() => cancelOCRJob(result.fileName)}
+                      className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded"
+                      title="Cancel this job"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary-600 transition-all"
-                  style={{ width: `${Math.round(result.progress * 100)}%` }}
-                />
-              </div>
+              {result.stage === 'processing' && (
+                <div className="space-y-2">
+                  <div className="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary-600 transition-all"
+                      style={{ width: `${Math.round(result.progress)}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400">
+                    <span>{Math.round(result.progress)}%</span>
+                    {result.estimatedRemainingSec && (
+                      <span>{Math.ceil(result.estimatedRemainingSec)}s remaining</span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {result.stage !== 'processing' && result.progress > 0 && (
+                <div className="h-1 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${result.stage === 'done' ? 'bg-green-600' : result.stage === 'error' ? 'bg-red-600' : 'bg-primary-600'}`}
+                    style={{ width: `100%` }}
+                  />
+                </div>
+              )}
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {result.mimeType} | {result.pages ? `${result.pages} page(s)` : 'Image'} | {result.text.slice(0, 120) || 'No text extracted yet.'}
+                {result.mimeType} {result.processingMode ? `| Mode: ${result.processingMode}` : ''}
+                {result.processingTimeMs ? ` | ${(result.processingTimeMs / 1000).toFixed(1)}s` : ''}
+                {result.layoutSummary ? ` | ${result.layoutSummary}` : ''}
               </p>
+              {result.error && (
+                <p className="text-xs text-red-500">{result.error}</p>
+              )}
+              {result.renderMode === 'markdown' ? (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 p-4 max-h-96 overflow-auto">
+                  <div className="markdown-content text-sm text-slate-700 dark:text-slate-200">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.text || '_No markdown extracted._'}</ReactMarkdown>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 dark:text-slate-400 whitespace-pre-wrap">
+                  {result.text.slice(0, 500) || 'No text extracted yet.'}
+                </p>
+              )}
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => handleSaveResult(result)}

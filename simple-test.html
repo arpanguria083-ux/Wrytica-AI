@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Backend Test</title>
+</head>
+<body>
+    <h1>Backend Connection Test</h1>
+    <div id="status">Checking...</div>
+    
+    <script>
+        async function testConnection() {
+            const statusDiv = document.getElementById('status');
+            
+            try {
+                console.log('Testing backend connection...');
+                const response = await fetch('http://localhost:8000/health');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    statusDiv.innerHTML = `
+                        <h2>✅ Backend Connected!</h2>
+                        <p>Status: ${data.status}</p>
+                        <p>Version: ${data.version}</p>
+                        <p>Features: PDF=${data.features.pdf_processing}, Office=${data.features.office_processing}</p>
+                    `;
+                    console.log('Backend is accessible:', data);
+                } else {
+                    statusDiv.innerHTML = `<h2>❌ Backend Error</h2><p>Status: ${response.status}</p>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<h2>❌ Connection Failed</h2><p>${error.message}</p>`;
+                console.error('Cannot connect to backend:', error);
+            }
+        }
+        
+        // Test immediately
+        testConnection();
+        
+        // Test every 5 seconds
+        setInterval(testConnection, 5000);
+    </script>
+</body>
+</html>

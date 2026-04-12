@@ -1,5 +1,5 @@
-﻿import React, { useMemo, useState } from 'react';
-import { Shield, Clipboard, History, Activity, Sparkles, Download, FileJson, FileSpreadsheet } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Shield, Clipboard, History, Activity, Sparkles, Download, FileJson, FileSpreadsheet, Trash2, Search } from 'lucide-react';
 import { useAppContext } from '../contexts/AppContext';
 import { ToolName, TimelineEntry } from '../utils';
 import { copyToClipboard, formatTimestamp } from '../utils';
@@ -33,27 +33,68 @@ export const HistoryDashboard: React.FC = () => {
     guardrails,
     feedbackLog,
     setSelectedGuardrailId,
-    selectedGuardrailId
+    selectedGuardrailId,
+    clearMemory
   } = useAppContext();
 
   const [selectedToolFilter, setSelectedToolFilter] = useState<ToolName | 'all'>('all');
   const [selectedGuardrailFilter, setSelectedGuardrailFilter] = useState<string | 'all'>('all');
-  const [exportFilter, setExportFilter] = useState<ToolName | 'all'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [ratingFilter, setRatingFilter] = useState<'all' | 'positive' | 'needs-fix'>('all');
+  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
 
   const mergedHistory = useMemo(() => {
-    // Use a Map to deduplicate by entry ID, keeping the first occurrence
-    const entriesMap = new Map<string, TimelineEntry>();
-    [...toolHistory, ...chatHistory].forEach(entry => {
-      if (!entriesMap.has(entry.id)) {
-        entriesMap.set(entry.id, entry);
-      }
+    // Combine and sort
+    const allEntries = [...toolHistory, ...chatHistory].sort((a, b) => b.timestamp - a.timestamp);
+    
+    // Deduplicate/Group identical entries that occur very close to each other (e.g., within 5 minutes)
+    const uniqueEntries: TimelineEntry[] = [];
+    const seenMap = new Map<string, number>();
+
+    allEntries.forEach(entry => {
+      const key = `${entry.tool}_${entry.input}_${entry.output}`;
+      const lastTime = seenMap.get(key);
+      if (lastTime && (lastTime - entry.timestamp < 300000)) return;
+      uniqueEntries.push(entry);
+      seenMap.set(key, entry.timestamp);
     });
-    const entries = Array.from(entriesMap.values());
-    const filtered = entries
-      .filter(entry => selectedToolFilter === 'all' || entry.tool === selectedToolFilter)
-      .filter(entry => selectedGuardrailFilter === 'all' || entry.guardrailId === selectedGuardrailFilter);
-    return filtered.sort((a, b) => b.timestamp - a.timestamp);
-  }, [toolHistory, chatHistory, selectedToolFilter, selectedGuardrailFilter]);
+
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+
+    return uniqueEntries.filter(entry => {
+      // Tool Filter
+      if (selectedToolFilter !== 'all' && entry.tool !== selectedToolFilter) return false;
+      
+      // Guardrail Filter
+      if (selectedGuardrailFilter !== 'all' && entry.guardrailId !== selectedGuardrailFilter) return false;
+      
+      // Search Filter
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        const matchesInput = entry.input.toLowerCase().includes(query);
+        const matchesOutput = entry.output.toLowerCase().includes(query);
+        if (!matchesInput && !matchesOutput) return false;
+      }
+
+      // Date Filter
+      if (dateFilter !== 'all') {
+        const diff = now - entry.timestamp;
+        if (dateFilter === 'today' && diff > dayMs) return false;
+        if (dateFilter === 'week' && diff > dayMs * 7) return false;
+        if (dateFilter === 'month' && diff > dayMs * 30) return false;
+      }
+
+      // Rating Filter (joined with feedbackLog)
+      if (ratingFilter !== 'all') {
+        const feedback = feedbackLog.find(f => f.relatedEntryId === entry.id);
+        if (ratingFilter === 'positive' && (!feedback || feedback.rating <= 0)) return false;
+        if (ratingFilter === 'needs-fix' && (!feedback || feedback.rating >= 0)) return false;
+      }
+
+      return true;
+    });
+  }, [toolHistory, chatHistory, selectedToolFilter, selectedGuardrailFilter, searchQuery, ratingFilter, dateFilter, feedbackLog]);
 
   const feedbackSummary = useMemo(() => {
     if (!feedbackLog.length) return null;
@@ -79,13 +120,9 @@ export const HistoryDashboard: React.FC = () => {
     ? `${activeGuardrail.description} (${activeGuardrail.tone || 'Professional tone'})`
     : 'No guardrail selected. Pick a mode to enforce company tone, formatting, and prohibited terms.';
 
-  const exportTrainingData = (format: 'jsonl' | 'csv', toolFilter?: ToolName | 'all') => {
-    const allEntries = [...toolHistory, ...chatHistory];
-    // Filter for export (defaults to UI filter but can be overridden)
-    const filter = toolFilter ?? exportFilter;
-    const filteredEntries = filter === 'all' 
-      ? allEntries 
-      : allEntries.filter(entry => entry.tool === filter);
+  const exportTrainingData = (format: 'jsonl' | 'csv') => {
+    // Export exactly what's visible in the UI based on current filters
+    const filteredEntries = mergedHistory;
     
     const trainingData = filteredEntries.map(entry => {
       // Add grammar-specific fields
@@ -96,18 +133,19 @@ export const HistoryDashboard: React.FC = () => {
       } : {};
       
       const guardrail = guardrails.find(g => g.id === entry.guardrailId);
+      const feedback = feedbackLog.find(f => f.relatedEntryId === entry.id);
+
       return {
         input: entry.input,
         output: entry.output,
         tool: entry.tool,
         guardrail: guardrail?.name || 'none',
         guardrail_tone: guardrail?.tone || '',
+        user_rating: feedback ? (feedback.rating > 0 ? 'positive' : 'needs-fix') : 'none',
+        user_comment: feedback?.comment || '',
         model: entry.modelName || 'gemini',
         references_count: entry.references?.length || 0,
         references_titles: entry.references?.map(r => r.sourceTitle || 'Knowledge Base').join('; ') || '',
-        self_improve_applied: entry.selfImproveData?.applied || false,
-        self_improve_reranked: entry.selfImproveData?.rerankedChunkIds?.join('; ') || '',
-        self_improve_signals: entry.selfImproveData?.feedbackSignalsUsed || 0,
         timestamp: new Date(entry.timestamp).toISOString(),
         ...grammarFields
       };
@@ -128,7 +166,7 @@ export const HistoryDashboard: React.FC = () => {
       const grammarHeaders = hasGrammar 
         ? ['errors_found', 'errors_fixed', 'error_types'] 
         : [];
-      const headers = ['input', 'output', 'tool', 'guardrail', 'guardrail_tone', 'model', 'references_count', 'references_titles', 'self_improve_applied', 'self_improve_reranked', 'self_improve_signals', 'timestamp', ...grammarHeaders];
+      const headers = ['input', 'output', 'tool', 'guardrail', 'guardrail_tone', 'user_rating', 'user_comment', 'model', 'references_count', 'references_titles', 'timestamp', ...grammarHeaders];
       const csvRows = [headers.join(',')];
       trainingData.forEach(row => {
         const escaped = (val: string) => `"${(val || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`;
@@ -156,32 +194,34 @@ export const HistoryDashboard: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <select
-              value={exportFilter}
-              onChange={(e) => setExportFilter(e.target.value as ToolName | 'all')}
-              className="rounded-lg border border-slate-200 dark:border-dark-border bg-slate-50 dark:bg-slate-900/50 px-2 py-1.5 text-xs"
-              title="Filter export by tool"
-            >
-              <option value="all">All tools</option>
-              {Object.entries(TOOL_LABELS).map(([key, label]) => (
-                <option key={key} value={key}>{label}</option>
-              ))}
-            </select>
             <button
-              onClick={() => exportTrainingData('jsonl', exportFilter)}
+              onClick={() => exportTrainingData('jsonl')}
               disabled={mergedHistory.length === 0}
               className="flex items-center gap-2 px-3 py-2 rounded-full border border-slate-200 dark:border-dark-border text-slate-600 dark:text-slate-300 hover:border-primary-500 hover:text-primary-600 bg-white dark:bg-dark-surface shadow-sm disabled:opacity-50"
+              title="Export visible data as JSONL"
             >
               <FileJson size={16} />
               JSONL
             </button>
             <button
-              onClick={() => exportTrainingData('csv', exportFilter)}
+              onClick={() => exportTrainingData('csv')}
               disabled={mergedHistory.length === 0}
               className="flex items-center gap-2 px-3 py-2 rounded-full border border-slate-200 dark:border-dark-border text-slate-600 dark:text-slate-300 hover:border-primary-500 hover:text-primary-600 bg-white dark:bg-dark-surface shadow-sm disabled:opacity-50"
+              title="Export visible data as CSV"
             >
               <FileSpreadsheet size={16} />
               CSV
+            </button>
+            <button
+              onClick={() => {
+                if (window.confirm('Are you sure you want to clear all history? This cannot be undone.')) {
+                  clearMemory('history');
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-full border border-red-200 dark:border-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/10 bg-white dark:bg-dark-surface shadow-sm"
+            >
+              <Trash2 size={16} />
+              Clear History
             </button>
             <button
               onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
@@ -193,99 +233,115 @@ export const HistoryDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="p-4 rounded-2xl border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-surface shadow-sm space-y-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-500 uppercase">
-              <Shield size={16} />
-              Guardrail mode
+        <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-5">
+          {/* Active Guardrail Selection */}
+          <div className="md:col-span-2 p-4 rounded-2xl border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-surface shadow-sm space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+              <Shield size={14} />
+              Active Guardrail
             </div>
-            <div className="space-y-2">
-              <p className="text-base font-semibold text-slate-900 dark:text-white">
-                {activeGuardrail ? activeGuardrail.name : 'No guardrail set'}
+            <div className="space-y-1">
+              <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                {activeGuardrail ? activeGuardrail.name : 'No active guardrail'}
               </p>
-              <p className="text-sm text-slate-500 dark:text-slate-400">{guardrailModeDescription}</p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">{guardrailModeDescription}</p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5 pt-1">
               <button
-                onClick={() => {
-                  setSelectedGuardrailId(null);
-                  setSelectedGuardrailFilter('all');
-                }}
-                className="px-3 py-1 text-xs font-semibold rounded-full border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-primary-500 hover:text-primary-600"
+                onClick={() => setSelectedGuardrailId(null)}
+                className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full border transition-all ${!selectedGuardrailId ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20' : 'border-slate-100 dark:border-slate-800 text-slate-500 hover:border-slate-200'}`}
               >
-                Clear mode
+                Off
               </button>
-              {guardrailOptions.map(guardrail => (
+              {guardrailOptions.map(g => (
                 <button
-                  key={guardrail.id}
-                  onClick={() => {
-                    setSelectedGuardrailId(guardrail.id);
-                    setSelectedGuardrailFilter(guardrail.id);
-                  }}
-                  className={`px-3 py-1 text-xs font-semibold rounded-full border ${selectedGuardrailFilter === guardrail.id ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300'}`}
+                  key={g.id}
+                  onClick={() => setSelectedGuardrailId(g.id)}
+                  className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full border transition-all ${selectedGuardrailId === g.id ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20' : 'border-slate-100 dark:border-slate-800 text-slate-500 hover:border-slate-200'}`}
                 >
-                  {guardrail.name}
+                  {g.name}
                 </button>
               ))}
             </div>
           </div>
 
+          {/* Search Filter */}
           <div className="p-4 rounded-2xl border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-surface shadow-sm space-y-3">
             <div className="flex items-center justify-between text-xs uppercase tracking-wider text-slate-400">
-              <span>Filters</span>
-              <Activity size={16} />
+              <span>Search</span>
+              <Search size={14} />
             </div>
-            <div className="grid gap-2">
+            <div className="relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Find in history..."
+                className="w-full rounded-lg border border-slate-200 dark:border-dark-border bg-slate-50 dark:bg-slate-900/50 px-3 py-2 text-[11px] pl-8 focus:ring-1 focus:ring-primary-500 outline-none"
+              />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+            </div>
+          </div>
+
+          {/* Tools & Time Filter */}
+          <div className="p-4 rounded-2xl border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-surface shadow-sm space-y-3">
+            <div className="flex items-center justify-between text-xs uppercase tracking-wider text-slate-400">
+              <span>Quick Filters</span>
+              <Activity size={14} />
+            </div>
+            <div className="grid gap-1.5">
               <select
                 value={selectedToolFilter}
                 onChange={(e) => setSelectedToolFilter(e.target.value as ToolName | 'all')}
-                className="w-full rounded-lg border border-slate-200 dark:border-dark-border bg-slate-50 dark:bg-slate-900/50 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-200 dark:border-dark-border bg-slate-50 dark:bg-slate-900/50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider"
               >
-                <option value="all">All tools</option>
+                <option value="all">All Tools</option>
                 {Object.entries(TOOL_LABELS).map(([key, label]) => (
                   <option key={key} value={key}>{label}</option>
                 ))}
               </select>
               <select
-                value={selectedGuardrailFilter}
-                onChange={(e) => setSelectedGuardrailFilter(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 dark:border-dark-border bg-slate-50 dark:bg-slate-900/50 px-3 py-2 text-sm"
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value as any)}
+                className="w-full rounded-lg border border-slate-200 dark:border-dark-border bg-slate-50 dark:bg-slate-900/50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider"
               >
-                <option value="all">All guardrails</option>
-                {guardrails.map(g => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
+                <option value="all">Any Time</option>
+                <option value="today">Today</option>
+                <option value="week">Last 7 Days</option>
+                <option value="month">Last 30 Days</option>
               </select>
             </div>
           </div>
 
           <div className="p-4 rounded-2xl border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-surface shadow-sm space-y-3">
             <div className="flex items-center justify-between text-xs uppercase tracking-wider text-slate-400">
-              <span>Feedback insight</span>
-              <Sparkles size={16} />
+              <span>Insight</span>
+              <Sparkles size={14} />
             </div>
             {feedbackSummary ? (
-              <div className="space-y-2 text-sm">
-                <p className="text-base font-semibold text-slate-900 dark:text-white">
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-slate-900 dark:text-white">
                   {feedbackSummary.positive + feedbackSummary.negative} ratings
                 </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {feedbackSummary.positive} positive | {feedbackSummary.negative} needs work
-                </p>
-                <div className="space-y-1">
-                  {Object.entries(feedbackSummary.byTool).map(([tool, data]) => {
-                    const label = TOOL_LABELS[tool as ToolName] || tool;
-                    return (
-                      <div key={tool} className="flex items-center justify-between text-[11px] text-slate-500">
-                        <span>{label}</span>
-                        <span>{(data.rating / data.total).toFixed(2)} avg over {data.total}</span>
-                      </div>
-                    );
-                  })}
+                <div className="flex items-center gap-2">
+                  <div className="h-1.5 flex-1 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden flex">
+                    <div className="bg-emerald-500 h-full" style={{ width: `${(feedbackSummary.positive / (feedbackSummary.positive + feedbackSummary.negative)) * 100}%` }}></div>
+                    <div className="bg-red-500 h-full" style={{ width: `${(feedbackSummary.negative / (feedbackSummary.positive + feedbackSummary.negative)) * 100}%` }}></div>
+                  </div>
+                  <span className="text-[10px] font-bold text-slate-400">{(feedbackSummary.positive / (feedbackSummary.positive + feedbackSummary.negative) * 100).toFixed(0)}%</span>
                 </div>
+                <select
+                  value={ratingFilter}
+                  onChange={(e) => setRatingFilter(e.target.value as any)}
+                  className="w-full mt-1 rounded-lg border border-transparent bg-slate-50 dark:bg-slate-900/50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500"
+                >
+                  <option value="all">All Ratings</option>
+                  <option value="positive">Helpful Only</option>
+                  <option value="needs-fix">Needs Fix Only</option>
+                </select>
               </div>
             ) : (
-              <p className="text-xs text-slate-500 dark:text-slate-400">No feedback yet. Rate tools whenever you're ready.</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 italic">No feedback data available.</p>
             )}
           </div>
         </div>
@@ -311,49 +367,59 @@ export const HistoryDashboard: React.FC = () => {
             mergedHistory.map(entry => {
               const guardrail = guardrails.find(g => g.id === entry.guardrailId);
               return (
-                <div key={entry.id} className="p-5 rounded-2xl border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-surface shadow-sm space-y-3">
+                <div key={entry.id} className="p-4 rounded-2xl border border-slate-200 dark:border-dark-border bg-white dark:bg-dark-surface shadow-sm hover:shadow-md transition-shadow space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className={`px-3 py-1 text-xs font-semibold rounded-full ${TOOL_BADGES[entry.tool]}`}>{TOOL_LABELS[entry.tool]}</span>
-                      <span className="text-[11px] text-slate-400">{formatTimestamp(entry.timestamp)}</span>
+                      <span className={`px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full ${TOOL_BADGES[entry.tool]}`}>
+                        {TOOL_LABELS[entry.tool]}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-medium">{formatTimestamp(entry.timestamp)}</span>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
                       {guardrail && (
-                        <span className="text-[11px] px-2 py-1 rounded-full border border-slate-200 dark:border-dark-border text-slate-500">
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-50 dark:bg-slate-800 text-slate-500 font-medium">
                           {guardrail.name}
                         </span>
                       )}
                       <button
                         onClick={() => handleCopyOutput(entry.output)}
-                        className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-primary-600 hover:underline"
+                        className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-primary-600 hover:text-primary-700 transition-colors"
                       >
-                        <Clipboard size={12} /> Copy result
+                        <Clipboard size={12} /> Copy Result
                       </button>
                     </div>
                   </div>
 
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-1">
-                      <p className="text-[11px] uppercase tracking-wider text-slate-400">Input / prompt</p>
-                      <p className="text-sm text-slate-700 dark:text-slate-100 whitespace-pre-line">{entry.input}</p>
+                  <div className="flex flex-col md:flex-row gap-4">
+                    <div className="flex-1 space-y-1">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Input</p>
+                      <p className="text-sm text-slate-700 dark:text-slate-300 line-clamp-2 hover:line-clamp-none transition-all duration-300">{entry.input}</p>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-[11px] uppercase tracking-wider text-slate-400">Output</p>
-                      <p className="text-sm text-slate-900 dark:text-slate-200 whitespace-pre-line break-words">{entry.output}</p>
+                    <div className="flex-[2] space-y-1">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Output</p>
+                      <div className="text-sm text-slate-900 dark:text-slate-100 bg-slate-50/50 dark:bg-slate-900/30 p-3 rounded-xl border border-slate-100 dark:border-slate-800/50">
+                        <p className="whitespace-pre-line break-words line-clamp-3 hover:line-clamp-none transition-all duration-300">{entry.output}</p>
+                      </div>
                     </div>
                   </div>
                   {entry.references && entry.references.length > 0 && (
-                    <div className="text-[11px] text-slate-500 dark:text-slate-300 space-y-1">
-                      <p className="uppercase tracking-wider">Referenced knowledge</p>
-                      <ul className="list-disc pl-4 space-y-1 text-[12px] text-slate-600 dark:text-slate-400">
-                        {entry.references.map(ref => (
-                          <li key={ref.id}>
-                            <span className="font-semibold text-slate-800 dark:text-white">{ref.sourceTitle || 'Knowledge base'}</span>
-                            {ref.pageNumber ? ` (Pg ${ref.pageNumber})` : ''} — {ref.text.slice(0, 160)}...
-                            {ref.reason && <span className="block text-[11px] text-slate-400">Reason: {ref.reason}</span>}
-                          </li>
-                        ))}
-                      </ul>
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/50">
+                      <details className="group">
+                        <summary className="text-[10px] font-bold uppercase tracking-widest text-slate-400 cursor-pointer flex items-center gap-2 hover:text-primary-500 transition-colors list-none">
+                          <Sparkles size={12} className="text-primary-500" />
+                          <span>View {entry.references.length} Referenced Sources</span>
+                          <span className="group-open:rotate-180 transition-transform ml-auto">▼</span>
+                        </summary>
+                        <ul className="mt-3 space-y-2 pl-2 border-l-2 border-primary-500/20">
+                          {entry.references.map(ref => (
+                            <li key={ref.id} className="text-[11px] text-slate-600 dark:text-slate-400">
+                              <span className="font-bold text-slate-800 dark:text-slate-200">{ref.sourceTitle || 'Knowledge base'}</span>
+                              {ref.pageNumber ? ` (Pg ${ref.pageNumber})` : ''} — {ref.text.slice(0, 160)}...
+                              {ref.reason && <span className="block mt-0.5 text-[10px] italic text-slate-400">Reason: {ref.reason}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
                     </div>
                   )}
                 </div>

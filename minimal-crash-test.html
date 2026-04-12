@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Minimal Crash Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
+        button { padding: 10px 20px; margin: 10px; cursor: pointer; }
+        .log { background: #1e1e1e; color: #fff; padding: 10px; font-family: monospace; font-size: 12px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Minimal Crash Test - Isolating the Issue</h1>
+        
+        <div class="test-section">
+            <h3>Test 1: Simple Backend Health Check</h3>
+            <button onclick="testBackend()">Test Backend</button>
+            <div id="backend-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test 2: Process Single File</h3>
+            <input type="file" id="singleFile" accept=".pdf">
+            <button onclick="testSingleFile()">Process Single File</button>
+            <div id="single-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test 3: Rapid UI Updates (Simulate Progress)</h3>
+            <button onclick="testRapidUpdates()">Test Rapid UI Updates</button>
+            <div id="rapid-result">Progress: <span id="progress">0</span>/100</div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test 4: Memory Test (Create Large Arrays)</h3>
+            <button onclick="testMemory()">Test Memory Usage</button>
+            <div id="memory-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test 5: Full Folder Simulation</h3>
+            <button onclick="simulateFolderProcessing()">Simulate 65 Files</button>
+            <div id="simulation-result"></div>
+        </div>
+        
+        <h3>Console Log:</h3>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        const logEl = document.getElementById('log');
+        
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            logEl.textContent += `[${time}] ${msg}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(msg);
+        }
+        
+        async function testBackend() {
+            log('Testing backend...');
+            try {
+                const response = await fetch('http://localhost:8000/health');
+                const data = await response.json();
+                document.getElementById('backend-result').innerHTML = 
+                    `<span style="color: green;">✅ Backend OK: ${data.status}</span>`;
+                log(`Backend healthy: ${JSON.stringify(data)}`);
+            } catch (e) {
+                document.getElementById('backend-result').innerHTML = 
+                    `<span style="color: red;">❌ Backend Error: ${e.message}</span>`;
+                log(`Backend error: ${e.message}`);
+            }
+        }
+        
+        async function testSingleFile() {
+            const fileInput = document.getElementById('singleFile');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Please select a file');
+                return;
+            }
+            
+            log(`Processing single file: ${file.name} (${(file.size/1024/1024).toFixed(1)}MB)`);
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const response = await fetch('http://localhost:8000/api/documents/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('single-result').innerHTML = 
+                        `<span style="color: green;">✅ Processed: ${data.total_chunks} chunks</span>`;
+                    log(`Success: ${data.total_chunks} chunks in ${data.processing_time_ms}ms`);
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (e) {
+                document.getElementById('single-result').innerHTML = 
+                    `<span style="color: red;">❌ Error: ${e.message}</span>`;
+                log(`Error: ${e.message}`);
+            }
+        }
+        
+        async function testRapidUpdates() {
+            log('Testing rapid UI updates...');
+            const progressEl = document.getElementById('progress');
+            const resultEl = document.getElementById('rapid-result');
+            
+            resultEl.innerHTML = 'Testing...';
+            
+            // Simulate rapid updates like the real app
+            for (let i = 0; i <= 100; i++) {
+                progressEl.textContent = i;
+                
+                // Update result HTML like the real app does
+                resultEl.innerHTML = `Progress: ${i}/100 (${i}%)`;
+                
+                // Small delay to simulate real processing
+                if (i % 10 === 0) {
+                    await new Promise(r => setTimeout(r, 10));
+                }
+            }
+            
+            resultEl.innerHTML += ' - <span style="color: green;">✅ Completed without crash</span>';
+            log('Rapid updates test completed');
+        }
+        
+        async function testMemory() {
+            log('Testing memory usage...');
+            const resultEl = document.getElementById('memory-result');
+            
+            try {
+                // Simulate creating large arrays like the app does
+                const arrays = [];
+                for (let i = 0; i < 10; i++) {
+                    // Create array with 10000 elements (like 446 chunks)
+                    const largeArray = new Array(10000).fill({
+                        id: 'test',
+                        text: 'x'.repeat(1000),
+                        metadata: {}
+                    });
+                    arrays.push(largeArray);
+                    
+                    log(`Created array ${i+1}/10, size: ${JSON.stringify(largeArray).length} bytes`);
+                    
+                    // Yield to prevent blocking
+                    await new Promise(r => setTimeout(r, 100));
+                }
+                
+                resultEl.innerHTML = '<span style="color: green;">✅ Memory test passed</span>';
+                log('Memory test completed successfully');
+            } catch (e) {
+                resultEl.innerHTML = `<span style="color: red;">❌ Memory error: ${e.message}</span>`;
+                log(`Memory error: ${e.message}`);
+            }
+        }
+        
+        async function simulateFolderProcessing() {
+            log('Simulating folder processing (65 files)...');
+            const resultEl = document.getElementById('simulation-result');
+            resultEl.innerHTML = 'Processing...';
+            
+            const totalFiles = 65;
+            const processedFiles = [];
+            
+            for (let i = 1; i <= totalFiles; i++) {
+                // Simulate file processing
+                const doc = {
+                    id: `doc-${i}`,
+                    title: `File ${i}.pdf`,
+                    content: 'x'.repeat(50000), // 50KB content per file
+                    chunks: new Array(100).fill({text: 'chunk content'})
+                };
+                processedFiles.push(doc);
+                
+                // Update UI like the real app
+                if (i % 3 === 0 || i === totalFiles) {
+                    resultEl.innerHTML = `Processing: ${i}/${totalFiles} files (${Math.round(i/totalFiles*100)}%)`;
+                }
+                
+                // Simulate delay between files
+                await new Promise(r => setTimeout(r, 200));
+                
+                // Log every 10 files
+                if (i % 10 === 0) {
+                    log(`Processed ${i}/${totalFiles} files`);
+                }
+            }
+            
+            resultEl.innerHTML = `<span style="color: green;">✅ Simulated ${totalFiles} files without crash</span>`;
+            log(`Simulation complete. Processed ${processedFiles.length} files`);
+        }
+        
+        // Auto-run backend test
+        window.onload = () => {
+            log('🚀 Minimal Crash Test Loaded');
+            testBackend();
+        };
+    </script>
+</body>
+</html>

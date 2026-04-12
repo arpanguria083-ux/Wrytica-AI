@@ -15,7 +15,7 @@ const REASONING_MODELS = {
     supportsStructuredOutput: true,
     recommendedPromptStyle: 'reasoning' as const
   },
-  'gemini-2.5-flash': {
+  'gemini-2.0-flash': {
     supportsReasoning: true,
     supportsChainOfThought: true,
     supportsStructuredOutput: true,

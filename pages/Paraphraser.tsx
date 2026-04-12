@@ -1,37 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import ReactQuill from 'react-quill-new';
+import { RichEditor } from '../components/RichEditor';
 import { Copy, RefreshCw, ArrowRight, Gauge, Check, AlertCircle, ThumbsUp, ThumbsDown, Sparkles, FlipHorizontal, GitBranch, Waves, Minimize2, Type, Zap, Layers, Grid3X3, X } from 'lucide-react';
 import { AIService } from '../services/aiService';
+import { FallbackService } from '../services/fallbackService';
 import { PARAPHRASE_MODES_LIST, ParaphraseMode, copyToClipboard, generateId, buildContextEnhancement, plainTextToHtml, htmlToPlainText, getEffectiveSynonyms, ParaphraseCandidate } from '../utils';
 import { useAppContext } from '../contexts/AppContext';
-import 'react-quill-new/dist/quill.snow.css';
-
-const QUILL_MODULES = {
-  toolbar: [
-    ['bold', 'italic', 'underline', 'strike'],
-    [{ header: [1, 2, 3, false] }],
-    [{ list: 'ordered' }, { list: 'bullet' }],
-    ['blockquote', 'code-block'],
-    ['link'],
-    ['clean']
-  ],
-  clipboard: {
-    matchVisual: false
-  }
-};
-
-const QUILL_FORMATS = [
-  'header',
-  'bold',
-  'italic',
-  'underline',
-  'strike',
-  'blockquote',
-  'code-block',
-  'list',
-  'bullet',
-  'link'
-];
 
 // Mode descriptions for tooltips
 const MODE_DESCRIPTIONS: Record<ParaphraseMode, string> = {
@@ -64,6 +37,7 @@ export const Paraphraser: React.FC = () => {
   const { paraphraserState, setParaphraserState, config, updateUsage, isOverLimit, language, guardrails, selectedGuardrailId, recordToolHistory, recordFeedback, getFeedbackHints, saveInputText, getSavedInput } = useAppContext();
   const guardrail = guardrails.find(g => g.id === selectedGuardrailId) || undefined;
   const [lastHistoryEntryId, setLastHistoryEntryId] = useState<string | null>(null);
+  const [feedbackAnimation, setFeedbackAnimation] = useState<'up' | 'down' | null>(null);
   
   // Local UI state
   const [copied, setCopied] = useState(false);
@@ -99,15 +73,45 @@ export const Paraphraser: React.FC = () => {
   const synonyms = paraphraserState.synonyms;
   const toneAnalysis = paraphraserState.toneAnalysis;
 
-  // ReactQuill double-invoke fix for React 19
-  const quillRef = useRef<any>(null);
-  const [quillReady, setQuillReady] = useState(false);
+  // Rate limiting and production safeguards
+  const lastRequestTimeRef = useRef<number>(0);
+  const requestCountRef = useRef<number>(0);
+  const requestTimestampsRef = useRef<number[]>([]);
+  
+  const checkRateLimit = (): { allowed: boolean; waitTime?: number } => {
+    const now = Date.now();
+    const timeSinceLastRequest = now - lastRequestTimeRef.current;
+    
+    // Minimum time between requests (500ms)
+    if (timeSinceLastRequest < 500) {
+      return { allowed: false, waitTime: 500 - timeSinceLastRequest };
+    }
+    
+    // Sliding window rate limiting: max 10 requests per minute
+    const oneMinuteAgo = now - 60000;
+    requestTimestampsRef.current = requestTimestampsRef.current.filter(
+      timestamp => timestamp > oneMinuteAgo
+    );
+    
+    if (requestTimestampsRef.current.length >= 10) {
+      return { allowed: false, waitTime: 60000 };
+    }
+    
+    return { allowed: true };
+  };
+  
+  const recordRequest = () => {
+    const now = Date.now();
+    lastRequestTimeRef.current = now;
+    requestCountRef.current++;
+    requestTimestampsRef.current.push(now);
+    
+    // Keep only the last 20 timestamps for memory efficiency
+    if (requestTimestampsRef.current.length > 20) {
+      requestTimestampsRef.current = requestTimestampsRef.current.slice(-20);
+    }
+  };
 
-  useEffect(() => {
-    // Mark as ready after mount
-    const timer = setTimeout(() => setQuillReady(true), 100);
-    return () => clearTimeout(timer);
-  }, []);
 
   // Update token count on input change
   useEffect(() => {
@@ -125,13 +129,101 @@ export const Paraphraser: React.FC = () => {
   };
   const setSynonyms = (val: number) => setParaphraserState(prev => ({ ...prev, synonyms: val }));
 
+  // Input validation functions
+  const validateInputText = (text: string): { isValid: boolean; error?: string } => {
+    const trimmed = text.trim();
+    
+    if (!trimmed) {
+      return { isValid: false, error: 'Please enter text to paraphrase' };
+    }
+    
+    if (trimmed.length < 3) {
+      return { isValid: false, error: 'Text is too short (minimum 3 characters)' };
+    }
+    
+    if (trimmed.length > 10000) {
+      return { isValid: false, error: 'Text is too long (maximum 10,000 characters)' };
+    }
+    
+    // Check for excessive repetition
+    const words = trimmed.split(/\s+/);
+    const uniqueWords = new Set(words);
+    const repetitionRatio = uniqueWords.size / words.length;
+    
+    if (repetitionRatio < 0.2 && words.length > 10) {
+      return { isValid: false, error: 'Text contains excessive repetition. Please provide more varied content.' };
+    }
+    
+    // Check for gibberish or non-text content
+    const letterRatio = trimmed.replace(/[^a-zA-Z]/g, '').length / trimmed.length;
+    if (letterRatio < 0.3 && trimmed.length > 20) {
+      return { isValid: false, error: 'Text appears to contain mostly non-letter characters' };
+    }
+    
+    return { isValid: true };
+  };
+
+  const validateCustomInstructions = (instructions: string): { isValid: boolean; error?: string } => {
+    if (mode === 'Custom' && instructions.trim()) {
+      const trimmed = instructions.trim();
+      
+      if (trimmed.length > 500) {
+        return { isValid: false, error: 'Custom instructions too long (maximum 500 characters)' };
+      }
+      
+      // Check for potentially harmful instructions
+      const harmfulPatterns = [
+        /ignore.*guardrail/i,
+        /bypass.*safety/i,
+        /remove.*content/i,
+        /generate.*inappropriate/i,
+        /create.*offensive/i
+      ];
+      
+      for (const pattern of harmfulPatterns) {
+        if (pattern.test(trimmed)) {
+          return { isValid: false, error: 'Custom instructions contain potentially unsafe content' };
+        }
+      }
+    }
+    
+    return { isValid: true };
+  };
+
   const handleParaphrase = async () => {
-    if (!inputText.trim() || isOverLimit) return;
+    // Comprehensive input validation
+    const inputValidation = validateInputText(inputText);
+    if (!inputValidation.isValid) {
+      setError(inputValidation.error);
+      return;
+    }
+    
+    const instructionsValidation = validateCustomInstructions(customInstructions);
+    if (!instructionsValidation.isValid) {
+      setError(instructionsValidation.error);
+      return;
+    }
+    
+    if (isOverLimit) {
+      setError('Usage limit exceeded. Please wait or upgrade your plan.');
+      return;
+    }
+    
+    // Rate limiting check
+    const rateLimitCheck = checkRateLimit();
+    if (!rateLimitCheck.allowed) {
+      const waitSeconds = Math.ceil((rateLimitCheck.waitTime || 1000) / 1000);
+      setError(`Please wait ${waitSeconds} second${waitSeconds > 1 ? 's' : ''} before making another request.`);
+      return;
+    }
     
     setParaphraserState(prev => ({ ...prev, isLoading: true, toneAnalysis: null }));
-    setError(null);
-    setCandidates([]);
-    setShortCircuited(false);
+      setError(null);
+      setCandidates([]);
+      setShortCircuited(false);
+      
+      // Record the request for rate limiting
+      recordRequest();
     
     try {
       const feedbackHints = getFeedbackHints('paraphraser');
@@ -144,21 +236,38 @@ export const Paraphraser: React.FC = () => {
       // Use the new middleware with mode-specific effective synonyms
       const effectiveSynonyms = getEffectiveSynonyms(synonyms, mode);
       
-      const result = await AIService.paraphraseWithMiddleware(config, {
-        originalText: inputText,
-        mode,
-        modeIntensity,
-        globalSynonymIntensity: effectiveSynonyms,
-        extras: {
-          phraseFlip,
-          restructure: sentenceRestructure,
-          fluencyBoost: fluency,
-          compress: sentenceCompression,
-          wordLevel
-        },
-        customInstruction: customInstructionsText,
-        numCandidates
-      }, language, enhancement);
+      let result;
+      try {
+        result = await AIService.paraphraseWithMiddleware(config, {
+          originalText: inputText,
+          mode,
+          modeIntensity,
+          globalSynonymIntensity: effectiveSynonyms,
+          extras: {
+            phraseFlip,
+            restructure: sentenceRestructure,
+            fluencyBoost: fluency,
+            compress: sentenceCompression,
+            wordLevel
+          },
+          customInstruction: customInstructionsText,
+          numCandidates
+        }, language, enhancement);
+        
+        if (!result || !result.candidates || result.candidates.length === 0) throw new Error('AI returned no candidates');
+      } catch (aiError) {
+        console.warn('AI Paraphrasing failed, falling back to local analysis:', aiError);
+        const fallbackText = FallbackService.paraphrase(inputText);
+        result = {
+          candidates: [{
+            paraphrasedText: fallbackText,
+            tone: 'Neutral',
+            confidence: 0.5,
+            actualChangePct: 10
+          }],
+          shortCircuited: true
+        };
+      }
       
       setCandidates(result.candidates);
       setShortCircuited(result.shortCircuited);
@@ -232,7 +341,21 @@ export const Paraphraser: React.FC = () => {
   const handleFeedback = (rating: number) => {
     if (!lastHistoryEntryId) return;
     const note = rating > 0 ? 'Paraphrase was helpful' : 'Paraphrase needs refinement';
-    recordFeedback('paraphraser', rating, note, lastHistoryEntryId);
+    
+    // Check if the user wants to add a specific comment for "Needs fix"
+    let comment = note;
+    if (rating < 0) {
+      const userComment = window.prompt("What could be improved? (e.g., 'more formal', 'too repetitive')", "");
+      if (userComment !== null && userComment.trim() !== "") {
+        comment = userComment;
+      }
+    }
+    
+    recordFeedback('paraphraser', rating, comment, lastHistoryEntryId);
+    
+    // Trigger animation
+    setFeedbackAnimation(rating > 0 ? 'up' : 'down');
+    setTimeout(() => setFeedbackAnimation(null), 800); // Reset after animation
   };
 
   const handleOutputChange = (value: string) => {
@@ -500,24 +623,21 @@ export const Paraphraser: React.FC = () => {
                   Try Again
                 </button>
               </div>
-            ) : quillReady ? (
+            ) : (
               showDiff && candidates[selectedCandidateIndex]?.highlightedDiff ? (
-                <div 
+                <div
                   className="flex-1 p-6 overflow-auto text-slate-700 dark:text-slate-200 text-lg leading-relaxed"
                   dangerouslySetInnerHTML={{ __html: candidates[selectedCandidateIndex].highlightedDiff }}
                 />
               ) : (
-                <ReactQuill
-                  ref={quillRef}
+                <RichEditor
                   value={outputHtml}
                   onChange={handleOutputChange}
-                  modules={QUILL_MODULES}
-                  formats={QUILL_FORMATS}
                   placeholder="Paraphrased text with formatting will appear here..."
                   className="flex-1 bg-white dark:bg-dark-surface"
                 />
               )
-            ) : null}
+            )}
           </div>
 
           {/* Change percentage indicator */}
@@ -610,17 +730,27 @@ export const Paraphraser: React.FC = () => {
             <div className="mt-3 flex items-center gap-3 text-xs text-slate-500">
                <span>Rate this paraphrase:</span>
                <button
+                 id="feedback-up"
                  onClick={() => handleFeedback(1)}
-                 className="flex items-center space-x-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900"
+                 className={`flex items-center space-x-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 transition-all duration-300 ${
+                   feedbackAnimation === 'up' 
+                     ? 'bg-green-100 border-green-300 text-green-700 dark:bg-green-900/30 dark:border-green-700 dark:text-green-400 scale-110' 
+                     : ''
+                 }`}
                >
-                 <ThumbsUp size={14} />
+                 <ThumbsUp size={14} className={feedbackAnimation === 'up' ? 'animate-pulse' : ''} />
                  <span>Helpful</span>
                </button>
                <button
+                 id="feedback-down"
                  onClick={() => handleFeedback(-1)}
-                 className="flex items-center space-x-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900"
+                 className={`flex items-center space-x-1 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 transition-all duration-300 ${
+                   feedbackAnimation === 'down' 
+                     ? 'bg-red-100 border-red-300 text-red-700 dark:bg-red-900/30 dark:border-red-700 dark:text-red-400 scale-110' 
+                     : ''
+                 }`}
                >
-                 <ThumbsDown size={14} />
+                 <ThumbsDown size={14} className={feedbackAnimation === 'down' ? 'animate-pulse' : ''} />
                  <span>Needs fix</span>
                </button>
             </div>

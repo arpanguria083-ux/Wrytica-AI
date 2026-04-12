@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CORS Test</title>
+</head>
+<body>
+    <h1>CORS Test for Port 5181</h1>
+    <div id="result"></div>
+    
+    <script>
+        async function testCORS() {
+            const resultDiv = document.getElementById('result');
+            
+            try {
+                console.log('Testing CORS from port 5181...');
+                const response = await fetch('http://localhost:8000/health', {
+                    method: 'GET',
+                    headers: {
+                        'Origin': 'http://localhost:5181'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <h2>✅ CORS SUCCESS!</h2>
+                        <p>Status: ${data.status}</p>
+                        <p>Version: ${data.version}</p>
+                        <p>Backend is accessible from port 5181</p>
+                    `;
+                    console.log('CORS test successful:', data);
+                } else {
+                    resultDiv.innerHTML = `<h2>❌ HTTP Error ${response.status}</h2>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<h2>❌ CORS Error</h2><p>${error.message}</p>`;
+                console.error('CORS test failed:', error);
+            }
+        }
+        
+        testCORS();
+    </script>
+</body>
+</html>

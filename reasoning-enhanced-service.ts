@@ -110,7 +110,7 @@ Communicate exclusively in ${language}.`;
   }
 
   async paraphrase(apiKey: string, text: string, mode: string, synonyms: number, language: string) {
-    const modelName = 'gemini-2.5-flash'; // This would come from config
+    const modelName = 'gemini-2.0-flash'; // This would come from config
     const capabilities = detectModelCapabilities(modelName);
     
     let systemInstruction: string;
@@ -126,7 +126,7 @@ Communicate exclusively in ${language}.`;
   }
 
   async checkGrammar(apiKey: string, text: string, history: string, language: string) {
-    const modelName = 'gemini-2.5-flash';
+    const modelName = 'gemini-2.0-flash';
     const capabilities = detectModelCapabilities(modelName);
     
     let systemInstruction: string;
@@ -142,7 +142,7 @@ Communicate exclusively in ${language}.`;
   }
 
   createChatSession(apiKey: string, language: string) {
-    const modelName = 'gemini-2.5-flash';
+    const modelName = 'gemini-2.0-flash';
     const capabilities = detectModelCapabilities(modelName);
     
     let systemInstruction: string;

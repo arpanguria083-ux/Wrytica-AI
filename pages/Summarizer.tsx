@@ -1,40 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import ReactQuill from 'react-quill-new';
+import { RichEditor } from '../components/RichEditor';
 import { AlignLeft, List, FileText, ArrowRight, ThumbsUp, ThumbsDown, Clipboard } from 'lucide-react';
 import { AIService } from '../services/aiService';
+import { FallbackService } from '../services/fallbackService';
 import { SummaryLength, SummaryFormat, generateId, buildContextEnhancement, plainTextToHtml, htmlToPlainText, copyToClipboard } from '../utils';
 import { useAppContext } from '../contexts/AppContext';
-import 'react-quill-new/dist/quill.snow.css';
-
-const QUILL_MODULES = {
-  toolbar: [
-    ['bold', 'italic', 'underline', 'strike'],
-    [{ header: [1, 2, false] }],
-    [{ list: 'ordered' }, { list: 'bullet' }],
-    ['blockquote', 'code-block'],
-    ['link'],
-    ['clean']
-  ],
-  clipboard: { matchVisual: false }
-};
-
-const QUILL_FORMATS = [
-  'header',
-  'bold',
-  'italic',
-  'underline',
-  'strike',
-  'blockquote',
-  'code-block',
-  'list',
-  'bullet',
-  'link'
-];
 
 export const Summarizer: React.FC = () => {
   const { summarizerState, setSummarizerState, config, updateUsage, isOverLimit, language, guardrails, selectedGuardrailId, recordToolHistory, recordFeedback, getFeedbackHints, saveInputText, getSavedInput } = useAppContext();
   const guardrail = guardrails.find(g => g.id === selectedGuardrailId) || undefined;
   const [lastHistoryEntryId, setLastHistoryEntryId] = useState<string | null>(null);
+  const [feedbackAnimation, setFeedbackAnimation] = useState<'up' | 'down' | null>(null);
 
   // Initialize input from saved state
   const [localText, setLocalText] = useState(() => {
@@ -61,7 +37,16 @@ export const Summarizer: React.FC = () => {
     try {
       const feedbackHints = getFeedbackHints('summarizer');
       const enhancement = buildContextEnhancement(guardrail, feedbackHints);
-      const result = await AIService.summarize(config, localText, length, format, language, enhancement);
+      
+      let result;
+      try {
+        result = await AIService.summarize(config, localText, length, format, language, enhancement);
+        if (!result || result.trim().length < 10) throw new Error('AI returned insufficient content');
+      } catch (aiError) {
+        console.warn('AI Summarization failed, falling back to local extractive analysis:', aiError);
+        result = FallbackService.summarize(localText, length, format);
+      }
+
       const htmlOutput = plainTextToHtml(result);
       setSummarizerState(prev => ({ 
         ...prev, 
@@ -92,6 +77,9 @@ export const Summarizer: React.FC = () => {
     if (!lastHistoryEntryId) return;
     const note = rating > 0 ? 'Summary was helpful' : 'Summary needs refinement';
     recordFeedback('summarizer', rating, note, lastHistoryEntryId);
+    // Trigger animation
+    setFeedbackAnimation(rating > 0 ? 'up' : 'down');
+    setTimeout(() => setFeedbackAnimation(null), 800); // Reset after animation
   };
 
   const handleSummaryHtmlChange = (value: string) => {
@@ -181,28 +169,33 @@ export const Summarizer: React.FC = () => {
               <span>Rate this summary:</span>
               <button
                 onClick={() => handleFeedback(1)}
-                className="flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900"
+                className={`flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 transition-all duration-300 ${
+                  feedbackAnimation === 'up' 
+                    ? 'bg-green-100 border-green-300 text-green-700 dark:bg-green-900/30 dark:border-green-700 dark:text-green-400 scale-110' 
+                    : ''
+                }`}
               >
-                <ThumbsUp size={12} />
+                <ThumbsUp size={12} className={feedbackAnimation === 'up' ? 'animate-pulse' : ''} />
                 Helpful
               </button>
               <button
                 onClick={() => handleFeedback(-1)}
-                className="flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900"
+                className={`flex items-center gap-1 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900 transition-all duration-300 ${
+                  feedbackAnimation === 'down' 
+                    ? 'bg-red-100 border-red-300 text-red-700 dark:bg-red-900/30 dark:border-red-700 dark:text-red-400 scale-110' 
+                    : ''
+                }`}
               >
-                <ThumbsDown size={12} />
+                <ThumbsDown size={12} className={feedbackAnimation === 'down' ? 'animate-pulse' : ''} />
                 Needs fix
               </button>
             </div>
           </div>
           <div className="border border-slate-200 dark:border-dark-border rounded-2xl overflow-hidden">
-            <ReactQuill
+            <RichEditor
               value={summaryHtml}
               onChange={handleSummaryHtmlChange}
-              modules={QUILL_MODULES}
-              formats={QUILL_FORMATS}
               placeholder="Summary will appear here with Word-style formatting..."
-              theme="snow"
               className="min-h-[260px] bg-white dark:bg-dark-surface"
             />
           </div>

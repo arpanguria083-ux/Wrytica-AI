@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Backend Test</title>
+</head>
+<body>
+    <h1>Backend Connection Test</h1>
+    <button onclick="testBackend()">Test Backend</button>
+    <div id="results"></div>
+    
+    <script>
+        async function testBackend() {
+            const results = document.getElementById('results');
+            results.innerHTML = '<h2>Testing...</h2>';
+            
+            try {
+                console.log('Testing backend health...');
+                const healthResponse = await fetch('http://localhost:8000/health');
+                const health = await healthResponse.json();
+                console.log('Health check result:', health);
+                
+                results.innerHTML += `
+                    <h3>✅ Backend Health Check</h3>
+                    <pre>${JSON.stringify(health, null, 2)}</pre>
+                `;
+                
+                // Test file upload
+                const testFile = new File(['test content'], 'test.txt', { type: 'text/plain' });
+                const formData = new FormData();
+                formData.append('file', testFile);
+                
+                console.log('Testing file processing...');
+                const processResponse = await fetch('http://localhost:8000/api/documents/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (processResponse.ok) {
+                    const processed = await processResponse.json();
+                    console.log('File processing result:', processed);
+                    
+                    results.innerHTML += `
+                        <h3>✅ File Processing Test</h3>
+                        <pre>${JSON.stringify(processed, null, 2)}</pre>
+                    `;
+                } else {
+                    throw new Error(`Processing failed: ${processResponse.status}`);
+                }
+                
+            } catch (error) {
+                console.error('Backend test failed:', error);
+                results.innerHTML += `
+                    <h3>❌ Error</h3>
+                    <pre>${error.message}</pre>
+                `;
+            }
+        }
+        
+        // Auto-test on load
+        window.onload = testBackend;
+    </script>
+</body>
+</html>

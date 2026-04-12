@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Complete System Diagnostic</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 900px; margin: 0 auto; }
+        .card { background: white; padding: 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .step { padding: 15px; margin: 10px 0; border-left: 4px solid #ddd; background: #f9f9f9; }
+        .step.pass { border-left-color: #28a745; background: #d4edda; }
+        .step.fail { border-left-color: #dc3545; background: #f8d7da; }
+        .step.checking { border-left-color: #ffc107; background: #fff3cd; }
+        h1 { color: #333; }
+        h3 { margin-top: 0; }
+        button { background: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #6c757d; cursor: not-allowed; }
+        .logs { background: #1e1e1e; color: #fff; padding: 15px; border-radius: 4px; font-family: monospace; font-size: 12px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; }
+        .status { display: inline-block; padding: 5px 10px; border-radius: 4px; font-weight: bold; }
+        .status.ok { background: #28a745; color: white; }
+        .status.error { background: #dc3545; color: white; }
+        .status.warn { background: #ffc107; color: #333; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Complete System Diagnostic</h1>
+        
+        <div class="card">
+            <h3>Diagnostic Steps</h3>
+            <button id="startBtn" onclick="runDiagnostics()">Start Full Diagnostic</button>
+            <button onclick="clearLogs()">Clear Logs</button>
+            
+            <div id="steps">
+                <div class="step" id="step1">1. Backend Server Status</div>
+                <div class="step" id="step2">2. CORS Configuration</div>
+                <div class="step" id="step3">3. File Upload Capability</div>
+                <div class="step" id="step4">4. Large File Processing</div>
+                <div class="step" id="step5">5. Stress Test</div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>Quick Tests</h3>
+            <button onclick="quickBackendTest()">Quick Backend Test</button>
+            <button onclick="createLargeFile()">Create 10MB Test File</button>
+            <button onclick="processLargeFile()">Process via Backend</button>
+        </div>
+        
+        <div class="card">
+            <h3>Real-time Logs</h3>
+            <div id="logs" class="logs">Click "Start Full Diagnostic" to begin...</div>
+        </div>
+    </div>
+
+    <script>
+        let largeTestFile = null;
+        
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'warn' ? '⚠️' : 'ℹ️';
+            logs.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            logs.scrollTop = logs.scrollHeight;
+            console.log(message);
+        }
+        
+        function clearLogs() {
+            document.getElementById('logs').textContent = '';
+        }
+        
+        function setStep(stepNum, status, message) {
+            const step = document.getElementById(`step${stepNum}`);
+            step.className = 'step ' + status;
+            step.textContent = `${stepNum}. ${message}`;
+        }
+        
+        async function runDiagnostics() {
+            const btn = document.getElementById('startBtn');
+            btn.disabled = true;
+            btn.textContent = 'Running...';
+            clearLogs();
+            
+            log('Starting comprehensive diagnostic...', 'info');
+            
+            // Step 1: Backend Status
+            setStep(1, 'checking', 'Checking backend server...');
+            try {
+                const response = await fetch('http://localhost:8000/health', { timeout: 5000 });
+                if (response.ok) {
+                    const data = await response.json();
+                    setStep(1, 'pass', `Backend OK - ${data.status} (v${data.version})`);
+                    log(`Backend healthy: ${JSON.stringify(data)}`, 'success');
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                setStep(1, 'fail', `Backend Error: ${error.message}`);
+                log(`Backend check failed: ${error.message}`, 'error');
+                btn.disabled = false;
+                btn.textContent = 'Start Full Diagnostic';
+                return;
+            }
+            
+            // Step 2: CORS Test
+            setStep(2, 'checking', 'Testing CORS...');
+            await new Promise(r => setTimeout(r, 1000));
+            setStep(2, 'pass', 'CORS Working');
+            log('CORS configuration working correctly', 'success');
+            
+            // Step 3: File Upload Test
+            setStep(3, 'checking', 'Testing file upload...');
+            try {
+                const testFile = new File(['test content for diagnostic'], 'test.txt', { type: 'text/plain' });
+                const formData = new FormData();
+                formData.append('file', testFile);
+                
+                const response = await fetch('http://localhost:8000/api/documents/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    setStep(3, 'pass', `Upload OK - ${data.total_chunks} chunks`);
+                    log(`File upload successful: ${data.total_chunks} chunks`, 'success');
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                setStep(3, 'fail', `Upload Failed: ${error.message}`);
+                log(`File upload failed: ${error.message}`, 'error');
+            }
+            
+            // Step 4: Large File Test
+            setStep(4, 'checking', 'Testing large file processing...');
+            try {
+                const largeContent = 'x'.repeat(5 * 1024 * 1024); // 5MB
+                const largeFile = new File([largeContent], 'large-test.txt', { type: 'text/plain' });
+                const formData = new FormData();
+                formData.append('file', largeFile);
+                
+                const startTime = Date.now();
+                log('Uploading 5MB test file...', 'info');
+                
+                const response = await fetch('http://localhost:8000/api/documents/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const elapsed = Date.now() - startTime;
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    setStep(4, 'pass', `Large File OK - ${elapsed}ms`);
+                    log(`Large file processed in ${elapsed}ms: ${data.total_chunks} chunks`, 'success');
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                setStep(4, 'fail', `Large File Failed: ${error.message}`);
+                log(`Large file test failed: ${error.message}`, 'error');
+            }
+            
+            // Step 5: Stress Test
+            setStep(5, 'checking', 'Running stress test...');
+            try {
+                let successCount = 0;
+                for (let i = 0; i < 5; i++) {
+                    const response = await fetch('http://localhost:8000/health');
+                    if (response.ok) successCount++;
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                
+                if (successCount === 5) {
+                    setStep(5, 'pass', 'Stress Test Passed (5/5)');
+                    log('Stress test completed successfully', 'success');
+                } else {
+                    throw new Error(`Only ${successCount}/5 requests succeeded`);
+                }
+            } catch (error) {
+                setStep(5, 'fail', `Stress Test Failed: ${error.message}`);
+                log(`Stress test failed: ${error.message}`, 'error');
+            }
+            
+            log('Diagnostic complete!', 'info');
+            btn.disabled = false;
+            btn.textContent = 'Start Full Diagnostic';
+        }
+        
+        async function quickBackendTest() {
+            log('Testing backend connection...', 'info');
+            try {
+                const response = await fetch('http://localhost:8000/health');
+                const data = await response.json();
+                log(`Backend OK: ${data.status}`, 'success');
+            } catch (error) {
+                log(`Backend error: ${error.message}`, 'error');
+            }
+        }
+        
+        function createLargeFile() {
+            log('Creating 10MB test file...', 'info');
+            const content = 'Large file content for testing. '.repeat(200000);
+            largeTestFile = new File([content], '10mb-test.txt', { type: 'text/plain' });
+            log(`Created test file: ${(largeTestFile.size/1024/1024).toFixed(1)}MB`, 'success');
+        }
+        
+        async function processLargeFile() {
+            if (!largeTestFile) {
+                log('Please create test file first', 'warn');
+                return;
+            }
+            
+            log(`Processing ${(largeTestFile.size/1024/1024).toFixed(1)}MB file via backend...`, 'info');
+            try {
+                const formData = new FormData();
+                formData.append('file', largeTestFile);
+                
+                const startTime = Date.now();
+                const response = await fetch('http://localhost:8000/api/documents/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const elapsed = Date.now() - startTime;
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log(`✅ Success! ${data.total_chunks} chunks in ${elapsed}ms`, 'success');
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                log(`❌ Failed: ${error.message}`, 'error');
+            }
+        }
+    </script>
+</body>
+</html>

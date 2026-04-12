@@ -68,7 +68,7 @@ export const StorageService = {
 
   async bulkPut<T>(storeName: string, items: T[]): Promise<void> {
     const db = await getDB();
-    const batchSize = 500;
+    const batchSize = 1000; // Increased from 500 for better performance
     
     for (let i = 0; i < items.length; i += batchSize) {
       const chunk = items.slice(i, i + batchSize);
@@ -77,7 +77,32 @@ export const StorageService = {
         await tx.store.put(item);
       }
       await tx.done;
-      // Yield to let the event loop and GC run
+      // Yield less frequently for better throughput
+      if (i % (batchSize * 2) === 0) {
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+  },
+
+  // Optimized bulk put with mandatory yielding to avoid RESULT_CODE_HUNG
+  async bulkPutOptimized<T>(storeName: string, items: T[], options?: {
+    batchSize?: number;
+    yieldInterval?: number;
+    onProgress?: (processed: number, total: number) => void;
+  }): Promise<void> {
+    const db = await getDB();
+    const batchSize = options?.batchSize ?? 50;
+    const yieldInterval = options?.yieldInterval ?? batchSize;
+
+    for (let i = 0; i < items.length; i += batchSize) {
+      const chunk = items.slice(i, i + batchSize);
+      const tx = db.transaction(storeName, 'readwrite');
+      for (const item of chunk) {
+        await tx.store.put(item);
+      }
+      await tx.done;
+      options?.onProgress?.(Math.min(i + batchSize, items.length), items.length);
+      // Yield after every chunk so main thread can process events (prevents hung tab)
       await new Promise(r => setTimeout(r, 0));
     }
   }
