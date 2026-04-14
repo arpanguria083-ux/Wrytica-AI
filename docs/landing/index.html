@@ -1557,36 +1557,46 @@
       } else v();
     }
 
-    // Listen for Tally form submission → trigger download
+    // Listen for Tally form submission → show success + trigger download
     window.addEventListener('message', function(e) {
       if (e.data && e.data.event === 'Tally.FormSubmitted' && e.data.formId === 'MeJWPM') {
         const isWin = selectedOS === 'windows';
         const dlUrl = DOWNLOAD_URLS.windows;
+
+        // Show success message
         document.getElementById('modalBody').innerHTML = `
           <div style="padding:8px 0 4px;text-align:center">
             <span style="font-size:52px;display:block;margin-bottom:14px">${isWin ? '🪟' : '🍎'}</span>
             <h4 style="font-size:22px;font-weight:900;margin-bottom:8px">
-              ${isWin ? 'Your download is starting!' : "You're on the macOS list!"}
+              ${isWin ? 'Download Starting...' : "You're on the macOS List!"}
             </h4>
-            <p style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px">
+            <p style="font-size:14px;color:#555;line-height:1.6;margin-bottom:24px">
               ${isWin
-                ? "We've logged your details. Your download will start automatically. If it doesn't, click below."
+                ? "We've saved your details. Your download is starting now."
                 : "We'll email you the moment macOS support launches."}
             </p>
             ${isWin ? `
-            <a href="${dlUrl}" class="modal-success dl-btn" download
-               style="display:inline-flex;align-items:center;gap:8px;padding:14px 28px;background:var(--yellow);color:var(--black);border:3px solid var(--black);font-weight:800;font-size:15px;text-decoration:none;box-shadow:5px 5px 0 #0a0a0a;">
-              ⬇ Download .exe for Windows
+            <a href="${dlUrl}" class="modal-success dl-btn" download="Wrytica-Setup-1.0.0.exe"
+               id="downloadBtn"
+               style="display:inline-flex;align-items:center;gap:8px;padding:16px 32px;background:var(--yellow);color:var(--black);border:3px solid var(--black);font-weight:800;font-size:16px;text-decoration:none;box-shadow:5px 5px 0 #0a0a0a;cursor:pointer;transition:all 0.1s;">
+              ⬇ Download Wrytica-Setup-1.0.0.exe
             </a>` : ''}
-            <p style="font-family:var(--mono);font-size:11px;color:#999;margin-top:16px">
-              Having trouble? Visit our
-              <a href="https://github.com" style="color:var(--black);font-weight:700">GitHub Releases ↗</a>
+            <p style="font-family:var(--mono);font-size:12px;color:#999;margin-top:20px">
+              If download doesn't start,
+              <a href="${isWin ? dlUrl : 'https://github.com/arpanguria083-ux/Wrytica-Landing/releases'}"
+                 style="color:var(--black);font-weight:700;text-decoration:none;">click here to download manually ↗</a>
             </p>
           </div>`;
+
+        // Auto-trigger download (with fallback for browsers that block auto-click)
         if (isWin && dlUrl) {
-          const a = document.createElement('a');
-          a.href = dlUrl; a.download = ''; a.style.display = 'none';
-          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          setTimeout(() => {
+            const btn = document.getElementById('downloadBtn');
+            if (btn) {
+              btn.click();
+              console.log('Download triggered');
+            }
+          }, 500);
         }
       }
     });
