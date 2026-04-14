@@ -1,1120 +1,464 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="scroll-smooth">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Wrytica AI — Privacy-First AI Writing Suite</title>
-  <meta name="description" content="10 AI writing tools. 3 OCR engines. Local knowledge base. Everything runs on your machine — nothing in the cloud." />
-  <meta name="keywords" content="AI writing assistant, privacy-first AI, local LLM, Ollama, paraphraser, grammar checker, OCR, knowledge base" />
-  <meta property="og:title" content="Wrytica AI — Privacy-First AI Writing Suite" />
-  <meta property="og:description" content="Write smarter. Stay private. Runs entirely on your machine." />
-  <meta property="og:image" content="assets/Sleek%20Wrytica%20AI%20Digital%20Logo%20Concept.png" />
-  <link rel="icon" href="assets/Sleek%20Wrytica%20AI%20Digital%20Logo%20Concept.png" type="image/png" />
+  <title>Wrytica AI — Write Smarter. Stay Private.</title>
+  <meta name="description" content="AI-powered writing assistant with paraphrasing, grammar checking, summarization, citations, OCR and knowledge base. Your API keys stay local — zero data leaks." />
+  <meta name="keywords" content="AI writing assistant, paraphraser, grammar checker, citation generator, OCR tool, privacy first AI, local LLM" />
+  <meta property="og:title" content="Wrytica AI — Write Smarter. Stay Private." />
+  <meta property="og:description" content="Paraphrase, summarize, cite, and chat with AI — without your data ever leaving your machine." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: {
+            brand: {
+              50:  '#f0f4ff',
+              100: '#e0e9ff',
+              200: '#c7d7fe',
+              300: '#a5b8fd',
+              400: '#818efb',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+              800: '#3730a3',
+              900: '#312e81',
+            }
+          },
+          animation: {
+            'pulse-slow': 'pulse 3s ease-in-out infinite',
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- ============================================================
+       ANALYTICS — FILL IN YOUR IDs BEFORE GOING LIVE
+       ============================================================ -->
+
+  <!-- Google Analytics 4 — replace G-XXXXXXXXXX with your Measurement ID -->
+  <!-- Get it at: https://analytics.google.com > Admin > Data Streams -->
+  <!--
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-XXXXXXXXXX');
+  </script>
+  -->
+
+  <!-- Microsoft Clarity — replace XXXXXXXXXX with your Project ID -->
+  <!-- Get it at: https://clarity.microsoft.com > New Project -->
+  <!--
+  <script type="text/javascript">
+    (function(c,l,a,r,i,t,y){
+        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+    })(window, document, "clarity", "script", "XXXXXXXXXX");
+  </script>
+  -->
+
   <style>
-    /* =====================================================
-       CSS CUSTOM PROPERTIES
-    ===================================================== */
-    :root {
-      --em-50: #ecfdf5; --em-100: #d1fae5; --em-200: #a7f3d0;
-      --em-300: #6ee7b7; --em-400: #34d399; --em-500: #10b981;
-      --em-600: #059669; --em-700: #047857; --em-800: #065f46;
-      --em-900: #064e3b;
-      --bg: #ffffff; --bg2: #f9fafb; --bg3: #f3f4f6;
-      --card: #ffffff; --card-border: #e5e7eb;
-      --text: #111827; --text2: #374151; --text3: #6b7280;
-      --nav-bg: rgba(255,255,255,0.92);
-      --shadow: 0 4px 24px rgba(0,0,0,0.07);
-      --shadow-lg: 0 12px 40px rgba(0,0,0,0.12);
-      --radius: 12px; --radius-lg: 20px;
-      --transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
+    * { font-family: 'Inter', sans-serif; }
+    .gradient-text {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
-    [data-theme="dark"] {
-      --bg: #0a0f0d; --bg2: #111815; --bg3: #1a2420;
-      --card: #1a2420; --card-border: #2d3d38;
-      --text: #f0fdf4; --text2: #d1fae5; --text3: #6ee7b7;
-      --nav-bg: rgba(10,15,13,0.92);
-      --shadow: 0 4px 24px rgba(0,0,0,0.4);
-      --shadow-lg: 0 12px 40px rgba(0,0,0,0.6);
+    .gradient-bg {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
     }
-    /* =====================================================
-       RESET & BASE
-    ===================================================== */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; font-size: 16px; }
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      background: var(--bg); color: var(--text);
-      line-height: 1.6; transition: background 0.3s, color 0.3s;
-      overflow-x: hidden;
+    .glass {
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.1);
     }
-    a { color: inherit; text-decoration: none; }
-    img { max-width: 100%; display: block; }
-    ul { list-style: none; }
-    button { cursor: pointer; border: none; background: none; font-family: inherit; }
-    /* =====================================================
-       UTILITY CLASSES
-    ===================================================== */
-    .container { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
-    .section { padding: 96px 0; }
-    .section-sm { padding: 64px 0; }
-    .text-em { color: var(--em-500); }
-    .badge {
-      display: inline-flex; align-items: center; gap: 6px;
-      background: var(--em-50); color: var(--em-700);
-      border: 1px solid var(--em-200); border-radius: 999px;
-      padding: 4px 14px; font-size: 13px; font-weight: 600;
+    .glow {
+      box-shadow: 0 0 60px rgba(99,102,241,0.3);
     }
-    [data-theme="dark"] .badge { background: var(--em-900); color: var(--em-300); border-color: var(--em-800); }
-    .btn {
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 12px 26px; border-radius: var(--radius);
-      font-size: 15px; font-weight: 600; transition: var(--transition);
+    .card-hover {
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
-    .btn-primary {
-      background: var(--em-500); color: #fff;
-      box-shadow: 0 4px 14px rgba(16,185,129,0.35);
-    }
-    .btn-primary:hover { background: var(--em-600); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(16,185,129,0.45); }
-    .btn-secondary {
-      background: transparent; color: var(--text);
-      border: 1.5px solid var(--card-border);
-    }
-    .btn-secondary:hover { border-color: var(--em-400); color: var(--em-500); transform: translateY(-2px); }
-    .section-label {
-      display: inline-flex; align-items: center; gap: 8px;
-      background: var(--em-50); color: var(--em-700);
-      border: 1px solid var(--em-200); border-radius: 999px;
-      padding: 5px 16px; font-size: 13px; font-weight: 600;
-      margin-bottom: 16px;
-    }
-    [data-theme="dark"] .section-label { background: var(--em-900); color: var(--em-300); border-color: var(--em-800); }
-    h2.section-title {
-      font-size: clamp(28px, 4vw, 42px); font-weight: 800;
-      line-height: 1.2; margin-bottom: 16px;
-    }
-    p.section-sub {
-      font-size: 18px; color: var(--text3); max-width: 560px;
-      line-height: 1.7;
-    }
-    /* Scroll animations */
-    .fade-in { opacity: 0; transform: translateY(32px); transition: opacity 0.6s ease, transform 0.6s ease; }
-    .fade-in.visible { opacity: 1; transform: none; }
-    /* =====================================================
-       NAVBAR
-    ===================================================== */
-    #navbar {
-      position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
-      background: var(--nav-bg); backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--card-border);
-      transition: var(--transition);
-    }
-    .nav-inner {
-      display: flex; align-items: center; justify-content: space-between;
-      height: 68px;
-    }
-    .nav-logo { display: flex; align-items: center; gap: 12px; }
-    .nav-logo img { height: 36px; width: auto; }
-    .nav-logo-text { font-size: 20px; font-weight: 800; color: var(--em-500); }
-    .nav-links { display: flex; align-items: center; gap: 8px; }
-    .nav-links a {
-      padding: 8px 14px; border-radius: 8px;
-      font-size: 14px; font-weight: 500; color: var(--text2);
-      transition: var(--transition);
-    }
-    .nav-links a:hover { color: var(--em-500); background: var(--em-50); }
-    [data-theme="dark"] .nav-links a:hover { background: var(--em-900); }
-    .nav-actions { display: flex; align-items: center; gap: 12px; }
-    #theme-toggle {
-      width: 40px; height: 40px; border-radius: 10px;
-      display: flex; align-items: center; justify-content: center;
-      background: var(--bg3); color: var(--text2); transition: var(--transition);
-      font-size: 18px;
-    }
-    #theme-toggle:hover { background: var(--em-100); color: var(--em-700); }
-    [data-theme="dark"] #theme-toggle:hover { background: var(--em-900); color: var(--em-300); }
-    .nav-cta { padding: 9px 20px; font-size: 14px; }
-    /* Mobile */
-    #hamburger {
-      display: none; width: 40px; height: 40px; border-radius: 10px;
-      background: var(--bg3); align-items: center; justify-content: center;
-      flex-direction: column; gap: 5px;
-    }
-    #hamburger span {
-      display: block; width: 20px; height: 2px;
-      background: var(--text); border-radius: 2px; transition: var(--transition);
-    }
-    #mobile-menu {
-      display: none; position: fixed; top: 68px; left: 0; right: 0;
-      background: var(--nav-bg); backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--card-border); z-index: 999;
-      padding: 16px 24px 24px;
-    }
-    #mobile-menu.open { display: block; }
-    #mobile-menu a {
-      display: block; padding: 12px 0; font-size: 16px; font-weight: 500;
-      color: var(--text2); border-bottom: 1px solid var(--card-border);
-    }
-    #mobile-menu a:last-child { border-bottom: none; }
-    #mobile-menu .btn { margin-top: 16px; width: 100%; justify-content: center; }
-    @media (max-width: 768px) {
-      .nav-links, .nav-cta { display: none; }
-      #hamburger { display: flex; }
-    }
-    /* =====================================================
-       HERO
-    ===================================================== */
-    #hero {
-      min-height: 100vh; display: flex; align-items: center;
-      padding: 120px 0 80px;
-      background: linear-gradient(135deg, var(--bg) 0%, var(--em-50) 50%, var(--bg) 100%);
-      position: relative; overflow: hidden;
-    }
-    [data-theme="dark"] #hero {
-      background: linear-gradient(135deg, var(--bg) 0%, #0d2318 50%, var(--bg) 100%);
-    }
-    #hero::before {
-      content: ''; position: absolute; top: -200px; right: -200px;
-      width: 600px; height: 600px; border-radius: 50%;
-      background: radial-gradient(circle, rgba(16,185,129,0.08) 0%, transparent 70%);
-      pointer-events: none;
-    }
-    .hero-grid {
-      display: grid; grid-template-columns: 1fr 1fr;
-      gap: 64px; align-items: center;
-    }
-    .hero-badge { margin-bottom: 20px; }
-    h1.hero-headline {
-      font-size: clamp(38px, 5.5vw, 64px); font-weight: 900;
-      line-height: 1.1; margin-bottom: 20px; letter-spacing: -0.02em;
-    }
-    h1.hero-headline .em { color: var(--em-500); }
-    .hero-sub {
-      font-size: 18px; color: var(--text3); line-height: 1.8;
-      margin-bottom: 36px; max-width: 480px;
-    }
-    .hero-ctas { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 36px; }
-    .floating-badge {
-      display: inline-flex; align-items: center; gap: 8px;
-      background: var(--card); border: 1.5px solid var(--em-300);
-      border-radius: 999px; padding: 8px 16px;
-      font-size: 13px; font-weight: 600; color: var(--em-700);
-      box-shadow: 0 4px 20px rgba(16,185,129,0.15);
-      animation: pulse-glow 2.5s ease-in-out infinite;
-    }
-    [data-theme="dark"] .floating-badge { color: var(--em-300); }
-    @keyframes pulse-glow {
-      0%, 100% { box-shadow: 0 4px 20px rgba(16,185,129,0.15); }
-      50% { box-shadow: 0 4px 28px rgba(16,185,129,0.35); }
-    }
-    .floating-badge .dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      background: var(--em-500); animation: blink 1.5s ease-in-out infinite;
-    }
-    @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
-    /* App mockup SVG wrapper */
-    .hero-visual { position: relative; }
-    .hero-visual svg { width: 100%; height: auto; filter: drop-shadow(0 24px 48px rgba(16,185,129,0.18)); }
-    @media (max-width: 900px) {
-      .hero-grid { grid-template-columns: 1fr; gap: 48px; }
-      .hero-visual { display: none; }
-    }
-    /* =====================================================
-       TRUST BAR
-    ===================================================== */
-    #trust {
-      background: var(--bg2);
-      border-top: 1px solid var(--card-border);
-      border-bottom: 1px solid var(--card-border);
-      padding: 40px 0;
-    }
-    .trust-grid {
-      display: grid; grid-template-columns: repeat(3, 1fr);
-      gap: 32px; text-align: center;
-    }
-    .trust-item { display: flex; align-items: center; gap: 16px; justify-content: center; }
-    .trust-icon {
-      width: 48px; height: 48px; border-radius: 12px;
-      background: var(--em-50); display: flex; align-items: center; justify-content: center;
-      font-size: 22px; flex-shrink: 0;
-    }
-    [data-theme="dark"] .trust-icon { background: var(--em-900); }
-    .trust-text h4 { font-size: 15px; font-weight: 700; margin-bottom: 2px; }
-    .trust-text p { font-size: 13px; color: var(--text3); }
-    @media (max-width: 640px) { .trust-grid { grid-template-columns: 1fr; gap: 20px; } }
-    /* =====================================================
-       FEATURES GRID
-    ===================================================== */
-    #features { background: var(--bg); }
-    .features-header { text-align: center; margin-bottom: 56px; }
-    .features-header .section-sub { margin: 0 auto; }
-    .features-grid {
-      display: grid; grid-template-columns: repeat(3, 1fr);
-      gap: 24px;
-    }
-    .feature-card {
-      background: var(--card); border: 1px solid var(--card-border);
-      border-radius: var(--radius-lg); padding: 28px 24px;
-      transition: var(--transition); position: relative; overflow: hidden;
-    }
-    .feature-card:hover {
+    .card-hover:hover {
       transform: translateY(-4px);
-      border-color: var(--em-300);
-      box-shadow: var(--shadow-lg);
+      box-shadow: 0 20px 40px rgba(99,102,241,0.15);
     }
-    .feature-card.powered {
-      border-color: var(--em-400);
-      background: linear-gradient(135deg, var(--card) 0%, var(--em-50) 100%);
+    .mode-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
     }
-    [data-theme="dark"] .feature-card.powered {
-      background: linear-gradient(135deg, var(--card) 0%, #0d2318 100%);
-    }
-    .powered-badge {
-      position: absolute; top: 16px; right: 16px;
-      background: var(--em-500); color: #fff;
-      font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
-      padding: 3px 10px; border-radius: 999px; text-transform: uppercase;
-    }
-    .feature-icon {
-      width: 48px; height: 48px; border-radius: 12px;
-      background: var(--em-50); display: flex; align-items: center; justify-content: center;
-      margin-bottom: 16px;
-    }
-    [data-theme="dark"] .feature-icon { background: var(--em-900); }
-    .feature-icon svg { width: 24px; height: 24px; }
-    .feature-card h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
-    .feature-card p { font-size: 14px; color: var(--text3); line-height: 1.6; }
-    @media (max-width: 900px) { .features-grid { grid-template-columns: repeat(2, 1fr); } }
-    @media (max-width: 580px) { .features-grid { grid-template-columns: 1fr; } }
-    /* =====================================================
-       OCR DEEP-DIVE
-    ===================================================== */
-    #ocr { background: var(--bg2); }
-    .ocr-header { text-align: center; margin-bottom: 56px; }
-    .ocr-pipeline {
-      display: flex; align-items: center; justify-content: center;
-      gap: 0; flex-wrap: wrap;
-    }
-    .ocr-engine-card {
-      background: var(--card); border: 1.5px solid var(--card-border);
-      border-radius: var(--radius-lg); padding: 32px 28px;
-      text-align: center; flex: 1; min-width: 220px; max-width: 300px;
-      transition: var(--transition);
-    }
-    .ocr-engine-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: var(--em-400); }
-    .ocr-engine-card.highlight { border-color: var(--em-500); background: linear-gradient(135deg, var(--card), var(--em-50)); }
-    [data-theme="dark"] .ocr-engine-card.highlight { background: linear-gradient(135deg, var(--card), #0d2318); }
-    .ocr-num {
-      width: 40px; height: 40px; border-radius: 50%;
-      background: var(--em-500); color: #fff;
-      font-size: 18px; font-weight: 800; display: flex; align-items: center;
-      justify-content: center; margin: 0 auto 16px;
-    }
-    .ocr-engine-card h3 { font-size: 18px; font-weight: 800; margin-bottom: 6px; }
-    .ocr-engine-card .engine-sub { font-size: 13px; color: var(--em-600); font-weight: 600; margin-bottom: 12px; }
-    [data-theme="dark"] .ocr-engine-card .engine-sub { color: var(--em-400); }
-    .ocr-engine-card p { font-size: 14px; color: var(--text3); line-height: 1.6; }
-    .ocr-arrow {
-      display: flex; flex-direction: column; align-items: center;
-      gap: 6px; padding: 0 8px; color: var(--em-500);
-    }
-    .ocr-arrow svg { width: 28px; height: 28px; }
-    .ocr-arrow span { font-size: 11px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em; }
-    @media (max-width: 700px) {
-      .ocr-pipeline { flex-direction: column; }
-      .ocr-arrow { transform: rotate(90deg); }
-    }
-    /* =====================================================
-       HOW IT WORKS
-    ===================================================== */
-    #how { background: var(--bg); }
-    .how-header { text-align: center; margin-bottom: 56px; }
-    .steps-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
-    .step-card {
-      background: var(--card); border: 1px solid var(--card-border);
-      border-radius: var(--radius-lg); padding: 36px 28px;
-      position: relative; transition: var(--transition);
-    }
-    .step-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: var(--em-300); }
-    .step-number {
-      font-size: 60px; font-weight: 900; line-height: 1;
-      color: var(--em-100); margin-bottom: 20px;
-      -webkit-text-stroke: 2px var(--em-300);
-    }
-    [data-theme="dark"] .step-number { color: var(--em-900); -webkit-text-stroke-color: var(--em-700); }
-    .step-card h3 { font-size: 20px; font-weight: 700; margin-bottom: 12px; }
-    .step-card p { font-size: 15px; color: var(--text3); line-height: 1.7; margin-bottom: 16px; }
-    .code-badge {
-      display: inline-flex; align-items: center; gap: 8px;
-      background: var(--bg3); border: 1px solid var(--card-border);
-      border-radius: 8px; padding: 8px 14px;
-      font-family: 'Courier New', monospace; font-size: 13px; font-weight: 600;
-      color: var(--em-600);
-    }
-    [data-theme="dark"] .code-badge { color: var(--em-400); }
-    @media (max-width: 768px) { .steps-grid { grid-template-columns: 1fr; } }
-    /* =====================================================
-       DEMO VIDEO
-    ===================================================== */
-    #demo { background: var(--bg2); }
-    .demo-header { text-align: center; margin-bottom: 40px; }
-    .browser-chrome {
-      background: var(--card); border: 1px solid var(--card-border);
-      border-radius: var(--radius-lg); overflow: hidden;
-      box-shadow: var(--shadow-lg); max-width: 900px; margin: 0 auto;
-    }
-    .browser-bar {
-      background: var(--bg3); border-bottom: 1px solid var(--card-border);
-      padding: 12px 16px; display: flex; align-items: center; gap: 12px;
-    }
-    .browser-dots { display: flex; gap: 6px; }
-    .browser-dots span {
-      width: 12px; height: 12px; border-radius: 50%;
-    }
-    .browser-dots span:nth-child(1) { background: #ff5f57; }
-    .browser-dots span:nth-child(2) { background: #febc2e; }
-    .browser-dots span:nth-child(3) { background: #28c840; }
-    .browser-url {
-      flex: 1; background: var(--bg); border: 1px solid var(--card-border);
-      border-radius: 6px; padding: 5px 14px;
-      font-size: 13px; color: var(--text3);
-    }
-    .video-embed { position: relative; padding-bottom: 56.25%; height: 0; }
-    .video-embed iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
-    /* =====================================================
-       APP SCREENSHOTS (SVG ILLUSTRATIONS)
-    ===================================================== */
-    #screenshots { background: var(--bg); }
-    .screenshots-header { text-align: center; margin-bottom: 48px; }
-    .screenshots-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
-    .screenshot-card {
-      background: var(--card); border: 1px solid var(--card-border);
-      border-radius: var(--radius-lg); overflow: hidden;
-      transition: var(--transition);
-    }
-    .screenshot-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
-    .screenshot-label {
-      padding: 14px 20px;
-      font-size: 14px; font-weight: 600; color: var(--text2);
-      border-top: 1px solid var(--card-border);
-    }
-    .screenshot-card svg { width: 100%; height: auto; display: block; }
-    @media (max-width: 768px) { .screenshots-grid { grid-template-columns: 1fr; } }
-    /* =====================================================
-       WAITLIST FORM
-    ===================================================== */
-    #access {
-      background: linear-gradient(135deg, var(--bg2) 0%, var(--em-50) 100%);
-      border-top: 1px solid var(--card-border);
-    }
-    [data-theme="dark"] #access {
-      background: linear-gradient(135deg, var(--bg2) 0%, #0d2318 100%);
-    }
-    .access-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: start; }
-    .access-info h2 { font-size: clamp(28px, 4vw, 40px); font-weight: 800; margin-bottom: 16px; }
-    .access-info p { font-size: 16px; color: var(--text3); line-height: 1.7; margin-bottom: 28px; }
-    .access-perks { display: flex; flex-direction: column; gap: 14px; }
-    .perk-item { display: flex; align-items: center; gap: 12px; font-size: 15px; font-weight: 500; }
-    .perk-item .check {
-      width: 24px; height: 24px; border-radius: 50%;
-      background: var(--em-500); color: #fff;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 12px; flex-shrink: 0;
-    }
-    .form-card {
-      background: var(--card); border: 1px solid var(--card-border);
-      border-radius: var(--radius-lg); padding: 40px;
-      box-shadow: var(--shadow);
-    }
-    .form-card h3 { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
-    .form-card .form-sub { font-size: 14px; color: var(--text3); margin-bottom: 28px; }
-    .form-group { margin-bottom: 18px; }
-    .form-group label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
-    .form-group input, .form-group textarea {
-      width: 100%; padding: 11px 14px; border: 1.5px solid var(--card-border);
-      border-radius: 10px; background: var(--bg); color: var(--text);
-      font-family: inherit; font-size: 15px; transition: var(--transition);
-      outline: none;
-    }
-    .form-group input:focus, .form-group textarea:focus {
-      border-color: var(--em-500);
-      box-shadow: 0 0 0 3px rgba(16,185,129,0.15);
-    }
-    .form-group textarea { resize: vertical; min-height: 90px; }
-    .checkbox-group { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 20px; }
-    .checkbox-group input[type="checkbox"] { width: 17px; height: 17px; margin-top: 2px; accent-color: var(--em-500); flex-shrink: 0; }
-    .checkbox-group label { font-size: 13px; color: var(--text3); line-height: 1.5; }
-    .checkbox-group a { color: var(--em-500); text-decoration: underline; }
-    .form-btn { width: 100%; padding: 14px; font-size: 16px; font-weight: 700; border-radius: 10px; }
-    .gdpr-notice {
-      font-size: 12px; color: var(--text3); line-height: 1.6;
-      margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--card-border);
-    }
-    .success-msg {
-      display: none; text-align: center; padding: 24px 0;
-    }
-    .success-msg .success-icon {
-      width: 60px; height: 60px; border-radius: 50%;
-      background: var(--em-50); border: 2px solid var(--em-500);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 28px; margin: 0 auto 16px;
-    }
-    .success-msg h4 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
-    .success-msg p { font-size: 14px; color: var(--text3); }
-    .success-msg a { color: var(--em-500); font-weight: 600; text-decoration: underline; }
-    @media (max-width: 900px) { .access-grid { grid-template-columns: 1fr; gap: 40px; } }
-    /* =====================================================
-       DEVELOPER
-    ===================================================== */
-    #developer { background: var(--bg); padding: 80px 0; }
-    .dev-card {
-      max-width: 640px; margin: 0 auto; text-align: center;
-      background: var(--card); border: 1px solid var(--card-border);
-      border-radius: var(--radius-lg); padding: 48px 40px;
-      box-shadow: var(--shadow);
-    }
-    .dev-avatar {
-      width: 80px; height: 80px; border-radius: 50%;
-      background: linear-gradient(135deg, var(--em-400), var(--em-700));
-      display: flex; align-items: center; justify-content: center;
-      font-size: 32px; font-weight: 800; color: #fff;
-      margin: 0 auto 20px;
-    }
-    .dev-card h3 { font-size: 26px; font-weight: 800; margin-bottom: 6px; }
-    .dev-card .dev-role { font-size: 15px; color: var(--em-500); font-weight: 600; margin-bottom: 16px; }
-    .dev-card .dev-bio { font-size: 15px; color: var(--text3); line-height: 1.7; margin-bottom: 28px; }
-    .dev-links { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
-    /* =====================================================
-       FOOTER
-    ===================================================== */
-    footer {
-      background: var(--bg3); border-top: 1px solid var(--card-border);
-      padding: 40px 0;
-    }
-    .footer-inner {
-      display: flex; align-items: center; justify-content: space-between;
-      flex-wrap: wrap; gap: 20px;
-    }
-    .footer-copy { font-size: 14px; color: var(--text3); }
-    .footer-links { display: flex; gap: 24px; }
-    .footer-links a {
-      font-size: 14px; color: var(--text3); transition: var(--transition);
-    }
-    .footer-links a:hover { color: var(--em-500); }
-    /* =====================================================
-       MODALS
-    ===================================================== */
-    .modal-backdrop {
-      display: none; position: fixed; inset: 0; z-index: 9999;
-      background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
-      align-items: center; justify-content: center; padding: 24px;
-    }
-    .modal-backdrop.open { display: flex; }
-    .modal-box {
-      background: var(--card); border: 1px solid var(--card-border);
-      border-radius: var(--radius-lg); width: 100%; max-width: 700px;
-      max-height: 80vh; overflow-y: auto; padding: 40px;
-      position: relative;
-    }
-    .modal-close {
-      position: sticky; top: 0; float: right;
-      width: 36px; height: 36px; border-radius: 8px;
-      background: var(--bg3); font-size: 18px; color: var(--text2);
-      display: flex; align-items: center; justify-content: center;
-      margin-bottom: 8px; transition: var(--transition);
-    }
-    .modal-close:hover { background: var(--em-100); color: var(--em-700); }
-    .modal-box h2 { font-size: 26px; font-weight: 800; margin-bottom: 8px; color: var(--em-600); }
-    .modal-box .modal-date { font-size: 13px; color: var(--text3); margin-bottom: 28px; }
-    .modal-box h3 { font-size: 17px; font-weight: 700; margin: 24px 0 10px; }
-    .modal-box p { font-size: 14px; color: var(--text2); line-height: 1.8; margin-bottom: 12px; }
-    .modal-box ul { padding-left: 20px; list-style: disc; }
-    .modal-box li { font-size: 14px; color: var(--text2); line-height: 1.8; margin-bottom: 6px; }
+    [data-animate] { opacity: 0; transform: translateY(20px); transition: opacity 0.6s ease, transform 0.6s ease; }
+    [data-animate].visible { opacity: 1; transform: translateY(0); }
+    details summary::-webkit-details-marker { display: none; }
   </style>
 </head>
-<body>
-  <!-- =====================================================
-       NAVBAR
-  ===================================================== -->
-  <nav id="navbar">
-    <div class="container">
-      <div class="nav-inner">
-        <a href="#hero" class="nav-logo">
-          <img src="assets/Sleek%20Wrytica%20AI%20Digital%20Logo%20Concept.png" alt="Wrytica AI Logo" />
-          <span class="nav-logo-text">Wrytica AI</span>
+
+<body class="bg-gray-950 text-white antialiased">
+
+  <!-- ============================================================
+       NAV
+       ============================================================ -->
+  <nav class="fixed top-0 left-0 right-0 z-50 border-b border-white/5" style="background:rgba(9,9,11,0.85);backdrop-filter:blur(20px);">
+    <div class="max-w-7xl mx-auto px-6 flex items-center justify-between h-16">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg gradient-bg flex items-center justify-center text-white font-bold text-sm">W</div>
+        <span class="font-bold text-lg tracking-tight">Wrytica<span class="gradient-text"> AI</span></span>
+      </div>
+      <div class="hidden md:flex items-center gap-8 text-sm text-gray-400">
+        <a href="#features" class="hover:text-white transition-colors">Features</a>
+        <a href="#how-it-works" class="hover:text-white transition-colors">How it works</a>
+        <a href="#pricing" class="hover:text-white transition-colors">Pricing</a>
+        <a href="#faq" class="hover:text-white transition-colors">FAQ</a>
+      </div>
+      <div class="flex items-center gap-3">
+        <a href="#waitlist" class="text-sm text-gray-400 hover:text-white transition-colors hidden sm:block">Join Waitlist</a>
+        <a href="#download" class="gradient-bg text-white text-sm font-semibold px-4 py-2 rounded-lg hover:opacity-90 transition-opacity">
+          Download Free
         </a>
-        <div class="nav-links">
-          <a href="#features">Features</a>
-          <a href="#demo">Demo</a>
-          <a href="#how">How It Works</a>
-          <a href="#access">Get Access</a>
-        </div>
-        <div class="nav-actions">
-          <button id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
-            <svg id="icon-sun" xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-            <svg id="icon-moon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="display:none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-          </button>
-          <a href="#access" class="btn btn-primary nav-cta">Get Early Access</a>
-          <button id="hamburger" aria-label="Open menu">
-            <span></span><span></span><span></span>
-          </button>
-        </div>
       </div>
     </div>
   </nav>
-  <div id="mobile-menu">
-    <a href="#features" onclick="closeMobileMenu()">Features</a>
-    <a href="#demo" onclick="closeMobileMenu()">Demo</a>
-    <a href="#how" onclick="closeMobileMenu()">How It Works</a>
-    <a href="#access" onclick="closeMobileMenu()">Get Access</a>
-    <a href="#access" class="btn btn-primary" onclick="closeMobileMenu()">Get Early Access →</a>
-  </div>
 
-  <!-- =====================================================
+  <!-- ============================================================
        HERO
-  ===================================================== -->
-  <section id="hero">
-    <div class="container">
-      <div class="hero-grid">
-        <div class="hero-content fade-in">
-          <div class="hero-badge">
-            <span class="badge">
-              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              Privacy-First AI Writing Suite
-            </span>
-          </div>
-          <h1 class="hero-headline">
-            Write Smarter.<br /><span class="em">Stay Private.</span>
-          </h1>
-          <p class="hero-sub">
-            10 AI writing tools. 3 OCR engines. Local knowledge base.
-            Everything runs on your machine &mdash; nothing in the cloud.
-          </p>
-          <div class="hero-ctas">
-            <a href="#access" class="btn btn-primary">Get Early Access &rarr;</a>
-            <a href="#demo" class="btn btn-secondary">
-              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              Watch Demo
-            </a>
-          </div>
-          <div class="floating-badge">
-            <span class="dot"></span>
-            100% Local &bull; No Data Leaves Your Machine
-          </div>
+       ============================================================ -->
+  <section class="relative min-h-screen flex items-center pt-16 overflow-hidden">
+    <!-- Background glow -->
+    <div class="absolute inset-0 pointer-events-none">
+      <div class="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full" style="background:radial-gradient(circle, rgba(99,102,241,0.15) 0%, transparent 70%);"></div>
+      <div class="absolute top-1/2 left-1/4 w-[400px] h-[400px] rounded-full" style="background:radial-gradient(circle, rgba(139,92,246,0.1) 0%, transparent 70%);"></div>
+    </div>
+
+    <div class="max-w-7xl mx-auto px-6 py-24 text-center relative z-10 w-full">
+      <!-- Pill badge -->
+      <div class="inline-flex items-center gap-2 bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-semibold px-4 py-1.5 rounded-full mb-8 animate-pulse-slow">
+        <span class="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+        Version 1.0 — Free &amp; Open Source
+      </div>
+
+      <!-- Headline -->
+      <h1 class="text-5xl md:text-7xl font-extrabold leading-tight tracking-tight mb-6">
+        Write Smarter.<br />
+        <span class="gradient-text">Stay Private.</span>
+      </h1>
+
+      <!-- Subheadline -->
+      <p class="text-xl md:text-2xl text-gray-400 max-w-3xl mx-auto mb-10 leading-relaxed">
+        The AI writing assistant that lives on <span class="text-white font-medium">your machine</span> —
+        paraphrase, summarize, cite, extract &amp; chat with documents
+        without a single word leaving your device.
+      </p>
+
+      <!-- CTA buttons -->
+      <div class="flex flex-col sm:flex-row gap-4 justify-center items-center mb-16">
+        <a id="download" href="https://github.com/arpang12/Wrytica-Word-and-Document-/releases" class="gradient-bg text-white font-bold px-8 py-4 rounded-xl text-lg hover:opacity-90 transition-all glow flex items-center gap-2">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          Download Free — Windows
+        </a>
+        <a href="#waitlist" class="border border-indigo-500/40 text-indigo-300 font-semibold px-8 py-4 rounded-xl text-lg hover:bg-indigo-500/10 transition-all flex items-center gap-2">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+          Get Early Access to Pro
+        </a>
+      </div>
+
+      <!-- Trust badges -->
+      <div class="flex flex-wrap justify-center gap-6 text-sm text-gray-500">
+        <div class="flex items-center gap-1.5">
+          <svg class="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+          100% Free to use
         </div>
-        <div class="hero-visual fade-in">
-          <!-- Realistic App UI mockup SVG -->
-          <svg viewBox="0 0 520 380" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Wrytica AI application mockup">
-            <!-- Browser window -->
-            <rect width="520" height="380" rx="14" fill="#1a2420"/>
-            <!-- Title bar -->
-            <rect width="520" height="40" rx="14" fill="#111815"/>
-            <rect y="14" width="520" height="26" fill="#111815"/>
-            <circle cx="18" cy="20" r="5" fill="#ff5f57"/>
-            <circle cx="34" cy="20" r="5" fill="#febc2e"/>
-            <circle cx="50" cy="20" r="5" fill="#28c840"/>
-            <rect x="70" y="12" width="280" height="16" rx="4" fill="#0d1a16"/>
-            <text x="210" y="24" fill="#6ee7b7" font-size="9" font-family="Inter,sans-serif" text-anchor="middle">localhost:5173 — Wrytica AI</text>
-            <!-- Sidebar -->
-            <rect x="0" y="40" width="138" height="340" fill="#0d1a16"/>
-            <!-- Logo in sidebar -->
-            <rect x="12" y="52" width="114" height="30" rx="6" fill="#1a2420"/>
-            <text x="69" y="71" fill="#10b981" font-size="12" font-weight="800" font-family="Inter,sans-serif" text-anchor="middle">Wrytica AI</text>
-            <!-- Nav items -->
-            <rect x="10" y="92" width="118" height="28" rx="6" fill="#10b981"/>
-            <text x="56" y="110" fill="#fff" font-size="11" font-weight="600" font-family="Inter,sans-serif" text-anchor="middle">&#x270F; Paraphraser</text>
-            <rect x="10" y="126" width="118" height="28" rx="6" fill="none"/>
-            <text x="56" y="144" fill="#6ee7b7" font-size="11" font-family="Inter,sans-serif" text-anchor="middle">&#x2713; Grammar</text>
-            <rect x="10" y="160" width="118" height="28" rx="6" fill="none"/>
-            <text x="56" y="178" fill="#6ee7b7" font-size="11" font-family="Inter,sans-serif" text-anchor="middle">&#x25A4; Summarizer</text>
-            <rect x="10" y="194" width="118" height="28" rx="6" fill="none"/>
-            <text x="56" y="212" fill="#6ee7b7" font-size="11" font-family="Inter,sans-serif" text-anchor="middle">&#x1F4AC; Chat</text>
-            <rect x="10" y="228" width="118" height="28" rx="6" fill="none"/>
-            <text x="56" y="246" fill="#6ee7b7" font-size="11" font-family="Inter,sans-serif" text-anchor="middle">&#x1F4C4; OCR</text>
-            <rect x="10" y="262" width="118" height="28" rx="6" fill="none"/>
-            <text x="56" y="280" fill="#6ee7b7" font-size="11" font-family="Inter,sans-serif" text-anchor="middle">&#x1F4DA; Knowledge Base</text>
-            <rect x="10" y="296" width="118" height="28" rx="6" fill="none"/>
-            <text x="56" y="314" fill="#4d7a6a" font-size="11" font-family="Inter,sans-serif" text-anchor="middle">&#x1F4CA; History</text>
-            <rect x="10" y="330" width="118" height="28" rx="6" fill="none"/>
-            <text x="56" y="348" fill="#4d7a6a" font-size="11" font-family="Inter,sans-serif" text-anchor="middle">&#x2699;&#xFE0F; Settings</text>
-            <!-- Main panel -->
-            <rect x="138" y="40" width="382" height="340" fill="#0f1a16"/>
-            <!-- Toolbar -->
-            <rect x="148" y="52" width="362" height="36" rx="8" fill="#1a2420"/>
-            <text x="164" y="74" fill="#10b981" font-size="12" font-weight="700" font-family="Inter,sans-serif">Paraphraser</text>
-            <!-- Mode pills -->
-            <rect x="148" y="96" width="66" height="22" rx="11" fill="#10b981"/>
-            <text x="181" y="111" fill="#fff" font-size="9" font-weight="600" font-family="Inter,sans-serif" text-anchor="middle">Standard</text>
-            <rect x="220" y="96" width="50" height="22" rx="11" fill="#1a2420"/>
-            <text x="245" y="111" fill="#6ee7b7" font-size="9" font-family="Inter,sans-serif" text-anchor="middle">Formal</text>
-            <rect x="276" y="96" width="54" height="22" rx="11" fill="#1a2420"/>
-            <text x="303" y="111" fill="#6ee7b7" font-size="9" font-family="Inter,sans-serif" text-anchor="middle">Creative</text>
-            <rect x="336" y="96" width="60" height="22" rx="11" fill="#1a2420"/>
-            <text x="366" y="111" fill="#6ee7b7" font-size="9" font-family="Inter,sans-serif" text-anchor="middle">Academic</text>
-            <rect x="402" y="96" width="44" height="22" rx="11" fill="#1a2420"/>
-            <text x="424" y="111" fill="#6ee7b7" font-size="9" font-family="Inter,sans-serif" text-anchor="middle">Simple</text>
-            <!-- Input area -->
-            <rect x="148" y="126" width="362" height="80" rx="8" fill="#1a2420" stroke="#2d3d38" stroke-width="1"/>
-            <text x="164" y="144" fill="#4d7a6a" font-size="10" font-family="Inter,sans-serif">Enter text to paraphrase...</text>
-            <!-- Output area -->
-            <rect x="148" y="214" width="362" height="80" rx="8" fill="#0d2318" stroke="#10b981" stroke-width="1.5"/>
-            <text x="164" y="231" fill="#6ee7b7" font-size="9" font-weight="600" font-family="Inter,sans-serif">PARAPHRASED OUTPUT</text>
-            <text x="164" y="248" fill="#d1fae5" font-size="10" font-family="Inter,sans-serif">The AI rewrites your text with improved clarity</text>
-            <text x="164" y="264" fill="#d1fae5" font-size="10" font-family="Inter,sans-serif">and style while preserving the original meaning.</text>
-            <!-- Bottom bar -->
-            <rect x="148" y="302" width="200" height="32" rx="8" fill="#10b981"/>
-            <text x="248" y="322" fill="#fff" font-size="11" font-weight="600" font-family="Inter,sans-serif" text-anchor="middle">Paraphrase &rarr;</text>
-            <rect x="356" y="302" width="154" height="32" rx="8" fill="#1a2420"/>
-            <text x="433" y="322" fill="#6ee7b7" font-size="11" font-family="Inter,sans-serif" text-anchor="middle">Copy &amp; Variants</text>
-            <!-- Synonym slider -->
-            <rect x="148" y="342" width="110" height="4" rx="2" fill="#2d3d38"/>
-            <rect x="148" y="342" width="70" height="4" rx="2" fill="#10b981"/>
-            <circle cx="218" cy="344" r="6" fill="#10b981"/>
-            <text x="164" y="355" fill="#4d7a6a" font-size="9" font-family="Inter,sans-serif">Synonym Strength</text>
-            <text x="270" y="355" fill="#6ee7b7" font-size="9" font-family="Inter,sans-serif">Variants: 3</text>
-          </svg>
+        <div class="flex items-center gap-1.5">
+          <svg class="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+          API keys stay local
+        </div>
+        <div class="flex items-center gap-1.5">
+          <svg class="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+          Works with free Gemini API
+        </div>
+        <div class="flex items-center gap-1.5">
+          <svg class="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+          Runs offline with Ollama / LM Studio
+        </div>
+      </div>
+
+      <!-- App preview placeholder -->
+      <div class="mt-20 mx-auto max-w-5xl relative">
+        <div class="absolute inset-0 rounded-2xl" style="background:radial-gradient(ellipse at center, rgba(99,102,241,0.2) 0%, transparent 70%); filter:blur(40px);"></div>
+        <div class="relative rounded-2xl overflow-hidden border border-white/10 shadow-2xl glass" style="aspect-ratio:16/9; min-height:300px; display:flex; align-items:center; justify-content:center;">
+          <!-- Replace this placeholder with an actual screenshot:
+               <img src="screenshot.png" alt="Wrytica AI app screenshot" class="w-full h-full object-cover" />
+          -->
+          <div class="text-center p-12">
+            <div class="w-16 h-16 gradient-bg rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl font-bold">W</div>
+            <p class="text-gray-400 text-sm">App screenshot goes here</p>
+            <p class="text-gray-600 text-xs mt-1">Replace with: <code class="text-indigo-400">docs/screenshot.png</code></p>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- =====================================================
-       TRUST BAR
-  ===================================================== -->
-  <div id="trust">
-    <div class="container">
-      <div class="trust-grid">
-        <div class="trust-item fade-in">
-          <div class="trust-icon">🔒</div>
-          <div class="trust-text">
-            <h4>Privacy First</h4>
-            <p>API keys stored locally only — never sent to our servers</p>
-          </div>
-        </div>
-        <div class="trust-item fade-in">
-          <div class="trust-icon">⚡</div>
-          <div class="trust-text">
-            <h4>Runs Offline</h4>
-            <p>Works with local LLMs — Ollama &amp; LM Studio fully supported</p>
-          </div>
-        </div>
-        <div class="trust-item fade-in">
-          <div class="trust-icon">🌍</div>
-          <div class="trust-text">
-            <h4>Open Source</h4>
-            <p>Source available on GitHub — inspect every line of code</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- =====================================================
-       FEATURES GRID
-  ===================================================== -->
-  <section id="features" class="section">
-    <div class="container">
-      <div class="features-header fade-in">
-        <div class="section-label">
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-          11 Powerful Tools
-        </div>
-        <h2 class="section-title">Everything You Need to Write Better</h2>
-        <p class="section-sub">From paraphrasing to OCR to a full knowledge base — all running locally with zero cloud dependency.</p>
-      </div>
-      <div class="features-grid">
-        <!-- Paraphraser -->
-        <div class="feature-card fade-in">
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </div>
-          <h3>Paraphraser</h3>
-          <p>10 modes including Standard, Formal, Humanize, Academic, Creative &amp; Custom. Synonym slider, 3 variants, extras toggles.</p>
-        </div>
-        <!-- Grammar -->
-        <div class="feature-card fade-in">
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-          </div>
-          <h3>Grammar Checker</h3>
-          <p>Detects spelling, grammar, style, punctuation &amp; clarity issues. One-click Apply All corrections with category filtering.</p>
-        </div>
-        <!-- Summarizer -->
-        <div class="feature-card fade-in">
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-          </div>
-          <h3>Summarizer</h3>
-          <p>Short / Medium / Long summaries as Paragraphs or Bullet Points. Supports multiple output languages.</p>
-        </div>
-        <!-- Citation -->
-        <div class="feature-card fade-in">
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-          </div>
-          <h3>Citation Generator</h3>
-          <p>Generates properly formatted citations in APA, MLA, Chicago &amp; Harvard styles from any source URL or manual entry.</p>
-        </div>
-        <!-- Chat -->
-        <div class="feature-card fade-in">
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-          </div>
-          <h3>Chat Assistant</h3>
-          <p>Knowledge-base grounded chat sessions with multi-session history. Works with Gemini API, Ollama &amp; LM Studio.</p>
-        </div>
-        <!-- OCR -->
-        <div class="feature-card powered fade-in">
-          <span class="powered-badge">Powerful</span>
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-          </div>
-          <h3>OCR &amp; Document Extraction</h3>
-          <p>3 engines: Fast (pdfplumber), Balanced (pypdfium2), Advanced (MinerU). Real-time progress with intelligent auto-fallback.</p>
-        </div>
-        <!-- Knowledge Base -->
-        <div class="feature-card powered fade-in">
-          <span class="powered-badge">Powerful</span>
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-          </div>
-          <h3>Knowledge Base</h3>
-          <p>Local vector search with folder import, PageIndex reasoning. Supports TXT, PDF, DOCX, XLSX &amp; PPTX files.</p>
-        </div>
-        <!-- Document Viewer -->
-        <div class="feature-card fade-in">
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          </div>
-          <h3>Document Viewer</h3>
-          <p>View and manage all extracted and imported documents with rich metadata. Preview content inline.</p>
-        </div>
-        <!-- Agent Planner -->
-        <div class="feature-card fade-in">
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          </div>
-          <h3>Agent Planner</h3>
-          <p>Topic &rarr; Goal &rarr; Plan &rarr; Memo multi-step AI workflow. Turns any topic into a structured action plan automatically.</p>
-        </div>
-        <!-- History -->
-        <div class="feature-card fade-in">
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          </div>
-          <h3>History Dashboard</h3>
-          <p>Local audit log of every tool use — searchable, filterable, with full replay. 100% stored on your machine.</p>
-        </div>
-        <!-- Settings -->
-        <div class="feature-card fade-in">
-          <div class="feature-icon">
-            <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-          </div>
-          <h3>Settings</h3>
-          <p>Switch between Gemini API, Ollama &amp; LM Studio providers. Configure guardrails, default language &amp; UI preferences.</p>
-        </div>
+  <!-- ============================================================
+       LOGO BAR
+       ============================================================ -->
+  <section class="border-y border-white/5 py-8 bg-white/[0.02]">
+    <div class="max-w-5xl mx-auto px-6">
+      <p class="text-center text-gray-600 text-xs font-semibold uppercase tracking-widest mb-6">Works with</p>
+      <div class="flex flex-wrap items-center justify-center gap-8 md:gap-16 opacity-40">
+        <span class="text-gray-300 font-semibold text-sm">Google Gemini</span>
+        <span class="text-gray-300 font-semibold text-sm">Ollama</span>
+        <span class="text-gray-300 font-semibold text-sm">LM Studio</span>
+        <span class="text-gray-300 font-semibold text-sm">PDF / DOCX</span>
+        <span class="text-gray-300 font-semibold text-sm">Windows</span>
       </div>
     </div>
   </section>
 
-  <!-- =====================================================
-       OCR DEEP-DIVE
-  ===================================================== -->
-  <section id="ocr" class="section">
-    <div class="container">
-      <div class="ocr-header fade-in">
-        <div class="section-label">
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-          Document Intelligence
-        </div>
-        <h2 class="section-title">3 Engines. One Pipeline.</h2>
-        <p class="section-sub">Wrytica automatically selects the best OCR engine for each document and falls back gracefully when needed.</p>
-      </div>
-      <div class="ocr-pipeline fade-in">
-        <div class="ocr-engine-card">
-          <div class="ocr-num">1</div>
-          <h3>Fast</h3>
-          <div class="engine-sub">pdfplumber</div>
-          <p>Instant text extraction for standard PDFs. Zero dependencies, works offline. Best for clean, text-based documents.</p>
-        </div>
-        <div class="ocr-arrow">
-          <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          <span>Auto fallback</span>
-        </div>
-        <div class="ocr-engine-card highlight">
-          <div class="ocr-num">2</div>
-          <h3>Balanced</h3>
-          <div class="engine-sub">Chandra / pypdfium2</div>
-          <p>Handles scanned PDFs and images with excellent accuracy. GPU-accelerated when available for faster throughput.</p>
-        </div>
-        <div class="ocr-arrow">
-          <svg fill="none" viewBox="0 0 24 24" stroke="#10b981" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          <span>Auto fallback</span>
-        </div>
-        <div class="ocr-engine-card">
-          <div class="ocr-num">3</div>
-          <h3>Advanced</h3>
-          <div class="engine-sub">MinerU</div>
-          <p>State-of-the-art deep learning pipeline for complex layouts, tables, equations &amp; multi-column academic papers.</p>
+  <!-- ============================================================
+       FEATURES
+       ============================================================ -->
+  <section id="features" class="py-28 max-w-7xl mx-auto px-6">
+    <div class="text-center mb-16" data-animate>
+      <p class="text-indigo-400 font-semibold text-sm uppercase tracking-widest mb-3">Everything you need</p>
+      <h2 class="text-4xl md:text-5xl font-extrabold mb-4">One tool. All your writing needs.</h2>
+      <p class="text-gray-400 text-lg max-w-2xl mx-auto">From a quick rephrase to deep document analysis — Wrytica AI handles it all, locally and privately.</p>
+    </div>
+
+    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+      <!-- Paraphraser -->
+      <div class="card-hover rounded-2xl p-6 border border-white/8 bg-white/[0.03]" data-animate>
+        <div class="w-12 h-12 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center mb-4 text-2xl">✍️</div>
+        <h3 class="font-bold text-lg mb-2">10-Mode Paraphraser</h3>
+        <p class="text-gray-400 text-sm leading-relaxed mb-4">Rewrite any text exactly the way you need it — not just synonym swaps. Ten distinct modes cover every writing scenario:</p>
+        <div class="flex flex-wrap gap-1.5">
+          <span class="mode-badge bg-blue-500/10 text-blue-300 border border-blue-500/20">Standard</span>
+          <span class="mode-badge bg-green-500/10 text-green-300 border border-green-500/20">Fluency</span>
+          <span class="mode-badge bg-yellow-500/10 text-yellow-300 border border-yellow-500/20">Humanize</span>
+          <span class="mode-badge bg-purple-500/10 text-purple-300 border border-purple-500/20">Academic</span>
+          <span class="mode-badge bg-pink-500/10 text-pink-300 border border-pink-500/20">Creative</span>
+          <span class="mode-badge bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">Simple</span>
+          <span class="mode-badge bg-orange-500/10 text-orange-300 border border-orange-500/20">Formal</span>
+          <span class="mode-badge bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">Custom</span>
         </div>
       </div>
+
+      <!-- Grammar -->
+      <div class="card-hover rounded-2xl p-6 border border-white/8 bg-white/[0.03]" data-animate>
+        <div class="w-12 h-12 rounded-xl bg-green-500/10 border border-green-500/20 flex items-center justify-center mb-4 text-2xl">✅</div>
+        <h3 class="font-bold text-lg mb-2">Smart Grammar Checker</h3>
+        <p class="text-gray-400 text-sm leading-relaxed">Not just spell-check — Wrytica forecasts errors before they happen, catches complex grammar issues, and suggests natural fixes powered by AI. Inline suggestions, zero friction.</p>
+      </div>
+
+      <!-- Summarizer -->
+      <div class="card-hover rounded-2xl p-6 border border-white/8 bg-white/[0.03]" data-animate>
+        <div class="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-4 text-2xl">📝</div>
+        <h3 class="font-bold text-lg mb-2">AI Summarization</h3>
+        <p class="text-gray-400 text-sm leading-relaxed">Condense long documents, research papers, and articles into crisp summaries. Choose your format: bullet points, executive brief, structured outline, or paragraph form.</p>
+      </div>
+
+      <!-- Citation -->
+      <div class="card-hover rounded-2xl p-6 border border-white/8 bg-white/[0.03]" data-animate>
+        <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mb-4 text-2xl">📚</div>
+        <h3 class="font-bold text-lg mb-2">Academic Citation Generator</h3>
+        <p class="text-gray-400 text-sm leading-relaxed">Generate accurate citations in APA, MLA, Chicago, and more. Built for students, researchers, and academics who need to cite sources fast and correctly.</p>
+      </div>
+
+      <!-- OCR -->
+      <div class="card-hover rounded-2xl p-6 border border-white/8 bg-white/[0.03]" data-animate>
+        <div class="w-12 h-12 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mb-4 text-2xl">🔍</div>
+        <h3 class="font-bold text-lg mb-2">OCR &amp; Deep PDF Extraction</h3>
+        <p class="text-gray-400 text-sm leading-relaxed">Extract text from scanned PDFs, images, and complex documents. Multiple extraction engines with automatic fallback for maximum accuracy — even on dense academic papers.</p>
+      </div>
+
+      <!-- Knowledge Base -->
+      <div class="card-hover rounded-2xl p-6 border border-white/8 bg-white/[0.03]" data-animate>
+        <div class="w-12 h-12 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center mb-4 text-2xl">🧠</div>
+        <h3 class="font-bold text-lg mb-2">Personal Knowledge Base</h3>
+        <p class="text-gray-400 text-sm leading-relaxed">Ingest entire folders of documents and chat with your own knowledge base. Find specific content across hundreds of files in seconds using semantic search.</p>
+      </div>
+
+      <!-- AI Chat -->
+      <div class="card-hover rounded-2xl p-6 border border-white/8 bg-white/[0.03]" data-animate>
+        <div class="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-2xl">💬</div>
+        <h3 class="font-bold text-lg mb-2">AI Writing Assistant Chat</h3>
+        <p class="text-gray-400 text-sm leading-relaxed">Ask questions about your documents, brainstorm ideas, get writing feedback, or chat with an AI that has full context on your document collection.</p>
+      </div>
+
+      <!-- Multi-language -->
+      <div class="card-hover rounded-2xl p-6 border border-white/8 bg-white/[0.03]" data-animate>
+        <div class="w-12 h-12 rounded-xl bg-pink-500/10 border border-pink-500/20 flex items-center justify-center mb-4 text-2xl">🌐</div>
+        <h3 class="font-bold text-lg mb-2">Multi-Language Support</h3>
+        <p class="text-gray-400 text-sm leading-relaxed">Write, paraphrase, and analyze content in multiple languages. No translation required — Wrytica understands and rewrites directly in your target language.</p>
+      </div>
+
+      <!-- Privacy -->
+      <div class="card-hover rounded-2xl p-6 border border-white/8 bg-white/[0.03] border-indigo-500/30 relative overflow-hidden" data-animate>
+        <div class="absolute top-0 right-0 bg-indigo-600 text-white text-xs font-bold px-3 py-1 rounded-bl-lg">KEY DIFFERENTIATOR</div>
+        <div class="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-2xl">🔒</div>
+        <h3 class="font-bold text-lg mb-2">Privacy-First Architecture</h3>
+        <p class="text-gray-400 text-sm leading-relaxed">Your API key and your documents <strong class="text-white">never leave your device</strong>. Use Google Gemini free tier, or run fully offline with Ollama or LM Studio. No subscriptions. No surveillance.</p>
+      </div>
+
     </div>
   </section>
 
-  <!-- =====================================================
+  <!-- ============================================================
        HOW IT WORKS
-  ===================================================== -->
-  <section id="how" class="section">
-    <div class="container">
-      <div class="how-header fade-in">
-        <div class="section-label">
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          Quick Start
-        </div>
-        <h2 class="section-title">Up and Running in Minutes</h2>
-        <p class="section-sub">No Docker, no cloud account, no subscription. Just clone and run.</p>
+       ============================================================ -->
+  <section id="how-it-works" class="py-24 border-y border-white/5 bg-white/[0.015]">
+    <div class="max-w-5xl mx-auto px-6">
+      <div class="text-center mb-16" data-animate>
+        <p class="text-indigo-400 font-semibold text-sm uppercase tracking-widest mb-3">Simple setup</p>
+        <h2 class="text-4xl font-extrabold mb-4">Up and running in 3 steps</h2>
+        <p class="text-gray-400 text-lg">No cloud accounts. No subscriptions. No data pipelines.</p>
       </div>
-      <div class="steps-grid">
-        <div class="step-card fade-in">
-          <div class="step-number">01</div>
-          <h3>Install in 1 Command</h3>
-          <p>Clone the repo and run the setup script. It installs all Python and Node.js dependencies automatically — no manual configuration needed.</p>
-          <div class="code-badge">
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            .\setup.ps1 &nbsp;|&nbsp; setup.bat
-          </div>
+
+      <div class="grid md:grid-cols-3 gap-8">
+        <div class="text-center" data-animate>
+          <div class="w-14 h-14 gradient-bg rounded-2xl flex items-center justify-center text-2xl font-black mx-auto mb-4 shadow-lg">1</div>
+          <h3 class="font-bold text-lg mb-2">Download &amp; Install</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">Download the free Windows installer from GitHub Releases. One-click install, no prerequisites needed.</p>
         </div>
-        <div class="step-card fade-in">
-          <div class="step-number">02</div>
-          <h3>Choose Your AI Provider</h3>
-          <p>Use a free Gemini API key from Google AI Studio, or run Ollama or LM Studio locally for completely offline operation — zero cost.</p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
-            <span class="badge" style="font-size:12px;">Gemini API</span>
-            <span class="badge" style="font-size:12px;">Ollama</span>
-            <span class="badge" style="font-size:12px;">LM Studio</span>
-          </div>
+        <div class="text-center" data-animate>
+          <div class="w-14 h-14 gradient-bg rounded-2xl flex items-center justify-center text-2xl font-black mx-auto mb-4 shadow-lg">2</div>
+          <h3 class="font-bold text-lg mb-2">Add Your Free API Key</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">Get a free Gemini API key from Google AI Studio (30 seconds). Paste it in Settings. Or skip entirely and use Ollama locally — completely offline.</p>
         </div>
-        <div class="step-card fade-in">
-          <div class="step-number">03</div>
-          <h3>Start Writing</h3>
-          <p>All 11 tools are immediately available. Your documents, chat history, and knowledge base stay entirely on your machine.</p>
-          <div class="code-badge">
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            100% Local &bull; Zero Cloud
-          </div>
+        <div class="text-center" data-animate>
+          <div class="w-14 h-14 gradient-bg rounded-2xl flex items-center justify-center text-2xl font-black mx-auto mb-4 shadow-lg">3</div>
+          <h3 class="font-bold text-lg mb-2">Start Writing Smarter</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">Paste your text, pick a tool, and let Wrytica do the work. Paraphrase, summarize, extract, and chat — all from one window.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- =====================================================
-       DEMO VIDEO
-  ===================================================== -->
-  <section id="demo" class="section-sm">
-    <div class="container">
-      <div class="demo-header fade-in">
-        <div class="section-label">
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Live Demo
-        </div>
-        <h2 class="section-title">See Wrytica in Action</h2>
-        <p class="section-sub" style="margin:0 auto;">Watch the full walkthrough — paraphrasing, OCR extraction, and knowledge base search, all running locally.</p>
+  <!-- ============================================================
+       USE CASES
+       ============================================================ -->
+  <section class="py-24 max-w-7xl mx-auto px-6">
+    <div class="text-center mb-16" data-animate>
+      <p class="text-indigo-400 font-semibold text-sm uppercase tracking-widest mb-3">Who uses Wrytica</p>
+      <h2 class="text-4xl font-extrabold">Built for the way you actually work</h2>
+    </div>
+    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div class="rounded-2xl p-6 border border-white/8 bg-white/[0.03] card-hover" data-animate>
+        <div class="text-4xl mb-4">🎓</div>
+        <h3 class="font-bold text-base mb-2">Students &amp; Academics</h3>
+        <ul class="text-gray-400 text-sm space-y-1.5">
+          <li>• Paraphrase without plagiarism</li>
+          <li>• Auto-generate citations</li>
+          <li>• Summarize research papers</li>
+          <li>• Improve essay grammar</li>
+        </ul>
       </div>
-      <div class="browser-chrome fade-in" style="margin-top:40px;">
-        <div class="browser-bar">
-          <div class="browser-dots">
-            <span></span><span></span><span></span>
-          </div>
-          <div class="browser-url">https://www.youtube.com/watch?v=YOUR_VIDEO_ID</div>
-        </div>
-        <div class="video-embed">
-          <iframe
-            src="https://www.youtube.com/embed/YOUR_VIDEO_ID"
-            title="Wrytica AI Demo"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowfullscreen
-          ></iframe>
-        </div>
+      <div class="rounded-2xl p-6 border border-white/8 bg-white/[0.03] card-hover" data-animate>
+        <div class="text-4xl mb-4">✍️</div>
+        <h3 class="font-bold text-base mb-2">Content Writers</h3>
+        <ul class="text-gray-400 text-sm space-y-1.5">
+          <li>• Humanize AI-generated text</li>
+          <li>• Expand or shorten drafts</li>
+          <li>• Switch tone (formal/casual)</li>
+          <li>• Beat writer's block with AI chat</li>
+        </ul>
+      </div>
+      <div class="rounded-2xl p-6 border border-white/8 bg-white/[0.03] card-hover" data-animate>
+        <div class="text-4xl mb-4">🔬</div>
+        <h3 class="font-bold text-base mb-2">Researchers</h3>
+        <ul class="text-gray-400 text-sm space-y-1.5">
+          <li>• Extract text from scanned PDFs</li>
+          <li>• Build personal knowledge base</li>
+          <li>• Semantic search across papers</li>
+          <li>• Summarize findings fast</li>
+        </ul>
+      </div>
+      <div class="rounded-2xl p-6 border border-white/8 bg-white/[0.03] card-hover" data-animate>
+        <div class="text-4xl mb-4">💼</div>
+        <h3 class="font-bold text-base mb-2">Professionals</h3>
+        <ul class="text-gray-400 text-sm space-y-1.5">
+          <li>• Rewrite emails professionally</li>
+          <li>• Summarize long reports</li>
+          <li>• Privacy-safe document analysis</li>
+          <li>• Multi-language support</li>
+        </ul>
       </div>
     </div>
   </section>
 
-  <!-- =====================================================
-       APP SCREENSHOTS (SVG ILLUSTRATIONS)
-  ===================================================== -->
-  <section id="screenshots" class="section">
-    <div class="container">
-      <div class="screenshots-header fade-in">
-        <div class="section-label">
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-          Tool Previews
-        </div>
-        <h2 class="section-title">Built for Serious Writers</h2>
-        <p class="section-sub" style="margin:0 auto;">Clean, focused interfaces that get out of your way and let you write.</p>
-      </div>
-      <div class="screenshots-grid" style="margin-top:40px;">
-        <!-- Paraphraser SVG -->
-        <div class="screenshot-card fade-in">
-          <svg viewBox="0 0 340 220" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect width="340" height="220" fill="#0f1a16"/>
-            <rect x="12" y="12" width="316" height="28" rx="6" fill="#1a2420"/>
-            <text x="20" y="30" fill="#10b981" font-size="11" font-weight="700" font-family="Inter,sans-serif">Paraphraser</text>
-            <rect x="12" y="48" width="60" height="18" rx="9" fill="#10b981"/>
-            <text x="42" y="60" fill="#fff" font-size="8" font-weight="600" font-family="Inter,sans-serif" text-anchor="middle">Standard</text>
-            <rect x="78" y="48" width="46" height="18" rx="9" fill="#1a2420"/>
-            <text x="101" y="60" fill="#6ee7b7" font-size="8" font-family="Inter,sans-serif" text-anchor="middle">Formal</text>
-            <rect x="130" y="48" width="52" height="18" rx="9" fill="#1a2420"/>
-            <text x="156" y="60" fill="#6ee7b7" font-size="8" font-family="Inter,sans-serif" text-anchor="middle">Humanize</text>
-            <rect x="188" y="48" width="56" height="18" rx="9" fill="#1a2420"/>
-            <text x="216" y="60" fill="#6ee7b7" font-size="8" font-family="Inter,sans-serif" text-anchor="middle">Academic</text>
-            <rect x="250" y="48" width="46" height="18" rx="9" fill="#1a2420"/>
-            <text x="273" y="60" fill="#6ee7b7" font-size="8" font-family="Inter,sans-serif" text-anchor="middle">Custom</text>
-            <rect x="12" y="74" width="316" height="56" rx="6" fill="#1a2420" stroke="#2d3d38" stroke-width="1"/>
-            <text x="22" y="90" fill="#6b7280" font-size="9" font-family="Inter,sans-serif">Enter your original text here...</text>
-            <rect x="12" y="138" width="316" height="56" rx="6" fill="#0d2318" stroke="#10b981" stroke-width="1.5"/>
-            <text x="22" y="154" fill="#6ee7b7" font-size="8" font-weight="600" font-family="Inter,sans-serif">OUTPUT · Variant 1 of 3</text>
-            <text x="22" y="170" fill="#d1fae5" font-size="9" font-family="Inter,sans-serif">Improved, rewritten text with enhanced clarity...</text>
-            <rect x="12" y="202" width="148" height="12" rx="6" fill="#1a2420"/>
-            <rect x="12" y="202" width="90" height="12" rx="6" fill="#10b981"/>
-            <text x="168" y="212" fill="#6ee7b7" font-size="8" font-family="Inter,sans-serif">Synonym: 60%</text>
-          </svg>
-          <div class="screenshot-label">Paraphraser — Mode Selector &amp; Output</div>
-        </div>
-        <!-- OCR SVG -->
-        <div class="screenshot-card fade-in">
-          <svg viewBox="0 0 340 220" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect width="340" height="220" fill="#0f1a16"/>
-            <rect x="12" y="12" width="316" height="28" rx="6" fill="#1a2420"/>
-            <text x="20" y="30" fill="#10b981" font-size="11" font-weight="700" font-family="Inter,sans-serif">OCR &amp; Document Extraction</text>
-            <!-- Engine selector -->
-            <rect x="12" y="48" width="96" height="22" rx="6" fill="#10b981"/>
-            <text x="60" y="63" fill="#fff" font-size="9" font-weight="600" font-family="Inter,sans-serif" text-anchor="middle">Fast (pdfplumber)</text>
-            <rect x="114" y="48" width="102" height="22" rx="6" fill="#1a2420"/>
-            <text x="165" y="63" fill="#6ee7b7" font-size="9" font-family="Inter,sans-serif" text-anchor="middle">Balanced (pypdfium2)</text>
-            <rect x="222" y="48" width="106" height="22" rx="6" fill="#1a2420"/>
-            <text x="275" y="63" fill="#6ee7b7" font-size="9" font-family="Inter,sans-serif" text-anchor="middle">Advanced (MinerU)</text>
-            <!-- Upload zone -->
-            <rect x="12" y="78" width="316" height="70" rx="8" fill="#1a2420" stroke="#2d3d38" stroke-width="1.5" stroke-dasharray="6 3"/>
-            <text x="170" y="108" fill="#6b7280" font-size="10" font-family="Inter,sans-serif" text-anchor="middle">Drop PDF / Image here or</text>
-            <rect x="130" y="118" width="80" height="18" rx="6" fill="#10b981"/>
-            <text x="170" y="130" fill="#fff" font-size="9" font-weight="600" font-family="Inter,sans-serif" text-anchor="middle">Browse Files</text>
-            <!-- Progress -->
-            <text x="12" y="164" fill="#6ee7b7" font-size="9" font-weight="600" font-family="Inter,sans-serif">Processing: document.pdf</text>
-            <rect x="12" y="170" width="316" height="10" rx="5" fill="#1a2420"/>
-            <rect x="12" y="170" width="210" height="10" rx="5" fill="#10b981"/>
-            <text x="12" y="196" fill="#6b7280" font-size="8" font-family="Inter,sans-serif">Extracting text from page 3 of 8... (Engine: Fast)</text>
-            <text x="290" y="196" fill="#10b981" font-size="8" font-weight="700" font-family="Inter,sans-serif">66%</text>
-          </svg>
-          <div class="screenshot-label">OCR — File Upload &amp; Real-Time Progress</div>
-        </div>
-        <!-- Knowledge Base SVG -->
-        <div class="screenshot-card fade-in">
-          <svg viewBox="0 0 340 220" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect width="340" height="220" fill="#0f1a16"/>
-            <rect x="12" y="12" width="316" height="28" rx="6" fill="#1a2420"/>
-            <text x="20" y="30" fill="#10b981" font-size="11" font-weight="700" font-family="Inter,sans-serif">Knowledge Base</text>
-            <rect x="240" y="16" width="80" height="20" rx="6" fill="#10b981"/>
-            <text x="280" y="29" fill="#fff" font-size="9" font-weight="600" font-family="Inter,sans-serif" text-anchor="middle">+ Import Folder</text>
-            <!-- Search -->
-            <rect x="12" y="48" width="316" height="24" rx="6" fill="#1a2420" stroke="#2d3d38" stroke-width="1"/>
-            <text x="26" y="64" fill="#4d7a6a" font-size="9" font-family="Inter,sans-serif">Search knowledge base...</text>
-            <!-- Doc cards row 1 -->
-            <rect x="12" y="80" width="148" height="56" rx="8" fill="#1a2420" stroke="#2d3d38" stroke-width="1"/>
-            <text x="22" y="97" fill="#10b981" font-size="8" font-weight="700" font-family="Inter,sans-serif">&#x1F4C4; research_paper.pdf</text>
-            <text x="22" y="110" fill="#6b7280" font-size="8" font-family="Inter,sans-serif">48 pages · 12,340 words</text>
-            <rect x="22" y="118" width="40" height="10" rx="5" fill="#065f46"/>
-            <text x="42" y="126" fill="#6ee7b7" font-size="7" font-family="Inter,sans-serif" text-anchor="middle">Indexed</text>
-            <rect x="180" y="80" width="148" height="56" rx="8" fill="#1a2420" stroke="#2d3d38" stroke-width="1"/>
-            <text x="190" y="97" fill="#10b981" font-size="8" font-weight="700" font-family="Inter,sans-serif">&#x1F4CB; meeting_notes.docx</text>
-            <text x="190" y="110" fill="#6b7280" font-size="8" font-family="Inter,sans-serif">3 pages · 890 words</text>
-            <rect x="190" y="118" width="40" height="10" rx="5" fill="#065f46"/>
-            <text x="210" y="126" fill="#6ee7b7" font-size="7" font-family="Inter,sans-serif" text-anchor="middle">Indexed</text>
-            <!-- Doc cards row 2 -->
-            <rect x="12" y="144" width="148" height="56" rx="8" fill="#1a2420" stroke="#2d3d38" stroke-width="1"/>
-            <text x="22" y="161" fill="#10b981" font-size="8" font-weight="700" font-family="Inter,sans-serif">&#x1F4CA; data_report.xlsx</text>
-            <text x="22" y="174" fill="#6b7280" font-size="8" font-family="Inter,sans-serif">1,200 rows · 8 sheets</text>
-            <rect x="22" y="182" width="52" height="10" rx="5" fill="#1c3a2a"/>
-            <text x="48" y="190" fill="#34d399" font-size="7" font-family="Inter,sans-serif" text-anchor="middle">Processing...</text>
-            <rect x="180" y="144" width="148" height="56" rx="8" fill="#1a2420" stroke="#2d3d38" stroke-width="1"/>
-            <text x="190" y="161" fill="#10b981" font-size="8" font-weight="700" font-family="Inter,sans-serif">&#x1F4DD; thesis_draft.txt</text>
-            <text x="190" y="174" fill="#6b7280" font-size="8" font-family="Inter,sans-serif">22,100 words</text>
-            <rect x="190" y="182" width="40" height="10" rx="5" fill="#065f46"/>
-            <text x="210" y="190" fill="#6ee7b7" font-size="7" font-family="Inter,sans-serif" text-anchor="middle">Indexed</text>
-          </svg>
-          <div class="screenshot-label">Knowledge Base — Document Cards Grid</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- =====================================================
-       WAITLIST / GET ACCESS FORM
-  ===================================================== -->
-  <section id="access" class="section">
-    <div class="container">
-      <div class="access-grid">
-        <div class="access-info fade-in">
-          <div class="section-label">
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-            Early Access
-          </div>
-          <h2>Request Access to the Repository</h2>
-          <p>Join our early access list. We&apos;ll send the GitHub repo link directly to your email — no spam, ever.</p>
-          <div class="access-perks">
-            <div class="perk-item">
-              <div class="check">&#x2713;</div>
-              <span>Full source code access on GitHub</span>
-            </div>
-            <div class="perk-item">
-              <div class="check">&#x2713;</div>
-              <span>Setup guide &amp; documentation included</span>
-            </div>
-            <div class="perk-item">
-              <div class="check">&#x2713;</div>
-              <span>All future updates &amp; new tools</span>
-            </div>
-            <div class="perk-item">
-              <div class="check">&#x2713;</div>
-              <span>Priority support from the developer</span>
-            </div>
-            <div class="perk-item">
-              <div class="check">&#x2713;</div>
-              <span>100% free &mdash; MIT licensed open source</span>
-            </div>
-          </div>
-        </div>
-        <div class="fade-in">
-          <div class="form-card">
-            <h3>Get Early Access</h3>
-            <p class="form-sub">We typically respond within 24 hours.</p>
-            <form id="access-form" action="https://formspree.io/f/YOUR_FORMSPREE_ID" method="POST">
-              <div class="form-group">
-                <label for="fname">Full Name <span style="color:#ef4444">*</span></label>
-                <input type="text" id="fname" name="name" placeholder="Jane Smith" required />
+  <!-- ============================================================
+       PRIVACY SECTION
+       ============================================================ -->
+  <section class="py-24 border-y border-white/5 bg-white/[0.015]">
+    <div class="max-w-5xl mx-auto px-6">
+      <div class="grid md:grid-cols-2 gap-12 items-center">
+        <div data-animate>
+          <p class="text-indigo-400 font-semibold text-sm uppercase tracking-widest mb-3">Privacy by design</p>
+          <h2 class="text-4xl font-extrabold mb-6">Your data belongs to you.<br />Always.</h2>
+          <p class="text-gray-400 leading-relaxed mb-6">Every other AI writing tool sends your text to their servers. Your sensitive documents, private drafts, confidential reports — stored and analyzed in the cloud.</p>
+          <p class="text-gray-400 leading-relaxed mb-8">Wrytica is different. Your API keys and your documents <strong class="text-white">never leave your machine</strong>. We physically cannot access your data because we never receive it.</p>
+          <div class="space-y-3">
+            <div class="flex items-start gap-3">
+              <div class="w-6 h-6 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg class="w-3 h-3 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
               </div>
-              <div class="form-group">
-                <label for="femail">Email Address <span style="color:#ef4444">*</span></label>
-                <input type="email" id="femail" name="email" placeholder="jane@example.com" required />
+              <span class="text-gray-300 text-sm">API keys stored <strong class="text-white">locally on your device</strong>, never transmitted</span>
+            </div>
+            <div class="flex items-start gap-3">
+              <div class="w-6 h-6 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg class="w-3 h-3 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
               </div>
-              <div class="form-group">
-                <label for="fcase">Use Case <span style="color:var(--text3);font-weight:400;">(optional)</span></label>
-                <textarea id="fcase" name="usecase" placeholder="Tell us briefly how you plan to use Wrytica AI..."></textarea>
+              <span class="text-gray-300 text-sm">Fully offline mode with <strong class="text-white">Ollama or LM Studio</strong> — zero internet required</span>
+            </div>
+            <div class="flex items-start gap-3">
+              <div class="w-6 h-6 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg class="w-3 h-3 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
               </div>
-              <div class="checkbox-group">
-                <input type="checkbox" id="fterms" name="terms" required />
-                <label for="fterms">I agree to the <a href="#" onclick="openModal('privacy-modal');return false;">Privacy Policy</a> and <a href="#" onclick="openModal('terms-modal');return false;">Terms of Service</a></label>
+              <span class="text-gray-300 text-sm">Open-source codebase — <strong class="text-white">verify everything yourself</strong></span>
+            </div>
+            <div class="flex items-start gap-3">
+              <div class="w-6 h-6 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg class="w-3 h-3 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
               </div>
-              <button type="submit" class="btn btn-primary form-btn">Request Access &rarr;</button>
-              <p class="gdpr-notice">
-                By submitting, you agree to our Privacy Policy. We collect your name and email solely to send repository access. Data is never sold or shared with third parties. Processed under GDPR Art. 6(1)(a) — consent. You may withdraw consent at any time by contacting us via <a href="https://www.arpan-guria.in/" target="_blank" rel="noopener" style="color:var(--em-500);">arpan-guria.in</a>.
-              </p>
-            </form>
-            <div class="success-msg" id="success-msg">
-              <div class="success-icon">✓</div>
-              <h4>You're on the list!</h4>
-              <p>Thank you — we'll send the repository link to your email within 24 hours.<br /><br />Repository: <a href="YOUR_GITHUB_REPO_URL" target="_blank" rel="noopener">YOUR_GITHUB_REPO_URL</a></p>
+              <span class="text-gray-300 text-sm">No Wrytica account required — <strong class="text-white">no tracking, no profiling</strong></span>
+            </div>
+          </div>
+        </div>
+        <div class="relative" data-animate>
+          <div class="rounded-2xl p-8 border border-indigo-500/20 bg-indigo-500/5">
+            <div class="space-y-4">
+              <div class="rounded-xl p-4 bg-red-500/5 border border-red-500/20">
+                <p class="text-xs font-semibold text-red-400 mb-1">❌ Other AI writing tools</p>
+                <p class="text-gray-400 text-sm">Your text → Their servers → Their AI → Back to you</p>
+                <p class="text-gray-500 text-xs mt-1">Your documents stored, analyzed, potentially used for training</p>
+              </div>
+              <div class="flex justify-center text-2xl text-gray-600">↕</div>
+              <div class="rounded-xl p-4 bg-green-500/5 border border-green-500/20">
+                <p class="text-xs font-semibold text-green-400 mb-1">✅ Wrytica AI</p>
+                <p class="text-gray-300 text-sm">Your text → Your AI (Gemini/Ollama) → Back to you</p>
+                <p class="text-gray-500 text-xs mt-1">Everything stays on your machine. Period.</p>
+              </div>
             </div>
           </div>
         </div>
@@ -1122,377 +466,267 @@
     </div>
   </section>
 
-  <!-- =====================================================
-       DEVELOPER
-  ===================================================== -->
-  <section id="developer">
-    <div class="container">
-      <div class="dev-card fade-in">
-        <div class="dev-avatar">A</div>
-        <h3>Arpan Guria</h3>
-        <div class="dev-role">Full-Stack Developer &amp; AI Engineer</div>
-        <p class="dev-bio">Full-stack developer specializing in AI tools and document intelligence. Building privacy-respecting software that puts users in control of their data and AI workflows.</p>
-        <div class="dev-links">
-          <a href="https://www.arpan-guria.in/" target="_blank" rel="noopener" class="btn btn-primary">
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-            Portfolio &rarr;
-          </a>
-          <a href="YOUR_GITHUB_REPO_URL" target="_blank" rel="noopener" class="btn btn-secondary">
-            <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
-            View on GitHub
-          </a>
+  <!-- ============================================================
+       PRICING
+       ============================================================ -->
+  <section id="pricing" class="py-28 max-w-5xl mx-auto px-6">
+    <div class="text-center mb-16" data-animate>
+      <p class="text-indigo-400 font-semibold text-sm uppercase tracking-widest mb-3">Pricing</p>
+      <h2 class="text-4xl font-extrabold mb-4">Start free. Upgrade when ready.</h2>
+      <p class="text-gray-400 text-lg">Everything you need today is free. Pro is coming with power features for heavy users.</p>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-8">
+      <!-- Free -->
+      <div class="rounded-2xl p-8 border border-white/8 bg-white/[0.03]" data-animate>
+        <div class="mb-6">
+          <p class="text-gray-400 font-medium mb-1">Free</p>
+          <p class="text-5xl font-black">$0</p>
+          <p class="text-gray-500 text-sm mt-1">Forever. No credit card.</p>
         </div>
+        <ul class="space-y-3 mb-8">
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-green-400 font-bold">✓</span> All 10 paraphrase modes</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-green-400 font-bold">✓</span> Grammar checker</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-green-400 font-bold">✓</span> Summarization</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-green-400 font-bold">✓</span> Citation generator</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-green-400 font-bold">✓</span> AI Chat assistant</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-green-400 font-bold">✓</span> OCR &amp; PDF extraction</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-green-400 font-bold">✓</span> Local LLM support (Ollama / LM Studio)</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-green-400 font-bold">✓</span> Multi-language support</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-green-400 font-bold">✓</span> Privacy-first, runs locally</li>
+        </ul>
+        <a href="https://github.com/arpang12/Wrytica-Word-and-Document-/releases" class="block text-center border border-white/20 text-white font-semibold px-6 py-3 rounded-xl hover:bg-white/5 transition-all">
+          Download Free
+        </a>
+      </div>
+
+      <!-- Pro -->
+      <div class="rounded-2xl p-8 border border-indigo-500/40 bg-indigo-500/5 relative overflow-hidden" data-animate>
+        <div class="absolute top-4 right-4 bg-indigo-600 text-white text-xs font-bold px-3 py-1 rounded-full">COMING SOON</div>
+        <div class="mb-6">
+          <p class="text-indigo-300 font-medium mb-1">Pro</p>
+          <p class="text-5xl font-black gradient-text">$9<span class="text-2xl text-gray-400 font-normal">/mo</span></p>
+          <p class="text-gray-500 text-sm mt-1">Early access pricing — join waitlist</p>
+        </div>
+        <ul class="space-y-3 mb-8">
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-indigo-400 font-bold">✓</span> Everything in Free</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-indigo-400 font-bold">✓</span> <strong class="text-white">Unlimited</strong> document knowledge base</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-indigo-400 font-bold">✓</span> Advanced semantic search</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-indigo-400 font-bold">✓</span> Batch document processing</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-indigo-400 font-bold">✓</span> Export to DOCX / PDF</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-indigo-400 font-bold">✓</span> Priority AI model access</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-indigo-400 font-bold">✓</span> Guardrail profiles for teams</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-indigo-400 font-bold">✓</span> Early access to all new features</li>
+          <li class="flex items-center gap-2 text-sm text-gray-300"><span class="text-indigo-400 font-bold">✓</span> Priority support</li>
+        </ul>
+        <a href="#waitlist" class="block text-center gradient-bg text-white font-bold px-6 py-3 rounded-xl hover:opacity-90 transition-all">
+          Join Waitlist — Get 50% Off Launch
+        </a>
       </div>
     </div>
   </section>
 
-  <!-- =====================================================
+  <!-- ============================================================
+       WAITLIST / EMAIL CAPTURE
+       ============================================================ -->
+  <section id="waitlist" class="py-24 border-y border-white/5 bg-white/[0.015]">
+    <div class="max-w-2xl mx-auto px-6 text-center">
+      <div data-animate>
+        <div class="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-1.5 rounded-full mb-6">
+          🚀 Pro version — limited early access spots
+        </div>
+        <h2 class="text-4xl font-extrabold mb-4">Be the first to know.</h2>
+        <p class="text-gray-400 text-lg mb-8">Join the waitlist for Wrytica Pro and get <strong class="text-white">50% off your first year</strong>. We'll notify you the moment it launches — no spam, ever.</p>
+
+        <!-- =====================================================
+             TALLY FORM EMBED (RECOMMENDED — free & unlimited)
+             Steps:
+             1. Go to https://tally.so and sign up free
+             2. Create a form: Name, Email, "What's your use case?"
+             3. Click Share > Embed > copy the embed snippet
+             4. Replace the <form> block below with the Tally embed
+
+             Example Tally embed:
+             <iframe data-tally-src="https://tally.so/embed/YOUR_FORM_ID?alignLeft=1&hideTitle=1&transparentBackground=1&dynamicHeight=1"
+               loading="lazy" width="100%" height="300" frameborder="0" title="Waitlist"></iframe>
+             <script>var d=document,w="https://tally.so/widgets/embed.js",v=function(){"undefined"!=typeof Tally?Tally.loadEmbeds():d.querySelectorAll("iframe[data-tally-src]:not([src])").forEach((function(e){e.src=e.dataset.tallySrc}))};if("undefined"!=typeof Tally)v();else if(d.querySelector('script[src="'+w+'"]')==null){var s=d.createElement("script");s.src=w,s.onload=v,s.onerror=v,d.body.appendChild(s);}<\/script>
+
+             FORMSPREE FALLBACK (50 free submissions/month):
+             Replace YOUR_FORM_ID below — get yours at https://formspree.io
+             ===================================================== -->
+
+        <form action="https://formspree.io/f/YOUR_FORM_ID" method="POST" class="space-y-4" id="waitlistForm">
+          <div class="grid sm:grid-cols-2 gap-4">
+            <input
+              type="text" name="name" placeholder="Your name" required
+              class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500/60 transition-colors"
+            />
+            <input
+              type="email" name="email" placeholder="your@email.com" required
+              class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500/60 transition-colors"
+            />
+          </div>
+          <select name="use_case" class="w-full px-4 py-3 rounded-xl bg-gray-900 border border-white/10 text-gray-300 focus:outline-none focus:border-indigo-500/60 transition-colors">
+            <option value="">What's your main use case? (optional)</option>
+            <option value="student">Student / Academic</option>
+            <option value="writer">Content Writer / Blogger</option>
+            <option value="researcher">Researcher / Analyst</option>
+            <option value="professional">Professional / Business</option>
+            <option value="developer">Developer / Technical writer</option>
+            <option value="other">Other</option>
+          </select>
+          <button type="submit" class="w-full gradient-bg text-white font-bold px-8 py-4 rounded-xl text-lg hover:opacity-90 transition-all">
+            Join Waitlist — Get 50% Off Launch Price
+          </button>
+          <p class="text-gray-600 text-xs">No spam. Unsubscribe anytime.</p>
+        </form>
+
+        <script>
+          document.getElementById('waitlistForm').addEventListener('submit', function() {
+            var btn = this.querySelector('button[type=submit]');
+            setTimeout(function() {
+              btn.textContent = "You're on the list! We'll be in touch.";
+              btn.disabled = true;
+              btn.style.opacity = '0.7';
+            }, 200);
+          });
+        </script>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       FAQ
+       ============================================================ -->
+  <section id="faq" class="py-24 max-w-3xl mx-auto px-6">
+    <div class="text-center mb-16" data-animate>
+      <p class="text-indigo-400 font-semibold text-sm uppercase tracking-widest mb-3">FAQ</p>
+      <h2 class="text-4xl font-extrabold">Common questions</h2>
+    </div>
+
+    <div class="space-y-4">
+
+      <details class="rounded-2xl border border-white/8 bg-white/[0.03] group" data-animate>
+        <summary class="flex justify-between items-center p-6 cursor-pointer font-semibold text-white list-none">
+          Is Wrytica AI really free?
+          <svg class="w-5 h-5 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </summary>
+        <p class="px-6 pb-6 text-gray-400 text-sm leading-relaxed">Yes — 100% free. The app is open source. You only need a free Google Gemini API key (or use Ollama/LM Studio locally for completely free offline use). There are no usage limits imposed by Wrytica.</p>
+      </details>
+
+      <details class="rounded-2xl border border-white/8 bg-white/[0.03] group" data-animate>
+        <summary class="flex justify-between items-center p-6 cursor-pointer font-semibold text-white list-none">
+          Do I need to create an account?
+          <svg class="w-5 h-5 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </summary>
+        <p class="px-6 pb-6 text-gray-400 text-sm leading-relaxed">No. Wrytica AI has zero accounts, zero login, zero tracking. Download, install, add your API key in Settings, and start. That's it.</p>
+      </details>
+
+      <details class="rounded-2xl border border-white/8 bg-white/[0.03] group" data-animate>
+        <summary class="flex justify-between items-center p-6 cursor-pointer font-semibold text-white list-none">
+          How does the privacy work exactly?
+          <svg class="w-5 h-5 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </summary>
+        <p class="px-6 pb-6 text-gray-400 text-sm leading-relaxed">When you use Gemini, your text goes directly from your machine to Google's API — Wrytica never sees it. When you use Ollama or LM Studio, nothing leaves your device at all. Your API key is stored in your browser's localStorage, not on any server.</p>
+      </details>
+
+      <details class="rounded-2xl border border-white/8 bg-white/[0.03] group" data-animate>
+        <summary class="flex justify-between items-center p-6 cursor-pointer font-semibold text-white list-none">
+          What AI models does it support?
+          <svg class="w-5 h-5 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </summary>
+        <p class="px-6 pb-6 text-gray-400 text-sm leading-relaxed">Currently supports <strong class="text-white">Google Gemini</strong> (free tier available at Google AI Studio), <strong class="text-white">Ollama</strong> (run any open-source model fully offline), and <strong class="text-white">LM Studio</strong> (local model runner with a GUI). More providers are on the roadmap.</p>
+      </details>
+
+      <details class="rounded-2xl border border-white/8 bg-white/[0.03] group" data-animate>
+        <summary class="flex justify-between items-center p-6 cursor-pointer font-semibold text-white list-none">
+          What's the difference between Free and Pro?
+          <svg class="w-5 h-5 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </summary>
+        <p class="px-6 pb-6 text-gray-400 text-sm leading-relaxed">Free includes all core writing tools — paraphrase, grammar, summarize, citations, OCR, and AI chat. Pro (coming soon) will add unlimited knowledge base storage, batch processing, DOCX/PDF export, team guardrails, and priority support. Join the waitlist for 50% off.</p>
+      </details>
+
+      <details class="rounded-2xl border border-white/8 bg-white/[0.03] group" data-animate>
+        <summary class="flex justify-between items-center p-6 cursor-pointer font-semibold text-white list-none">
+          Is it available on Mac or Linux?
+          <svg class="w-5 h-5 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </summary>
+        <p class="px-6 pb-6 text-gray-400 text-sm leading-relaxed">Currently Windows only in v1.0. Mac and Linux builds are on the roadmap. Join the waitlist and let us know your platform — it directly influences what we build next.</p>
+      </details>
+
+    </div>
+  </section>
+
+  <!-- ============================================================
+       FINAL CTA
+       ============================================================ -->
+  <section class="py-24 border-t border-white/5">
+    <div class="max-w-3xl mx-auto px-6 text-center" data-animate>
+      <h2 class="text-4xl md:text-5xl font-extrabold mb-6">
+        Your writing. Your data.<br />
+        <span class="gradient-text">Your control.</span>
+      </h2>
+      <p class="text-gray-400 text-lg mb-10">Download Wrytica AI free and experience AI writing tools that actually respect your privacy.</p>
+      <div class="flex flex-col sm:flex-row gap-4 justify-center">
+        <a href="https://github.com/arpang12/Wrytica-Word-and-Document-/releases" class="gradient-bg text-white font-bold px-8 py-4 rounded-xl text-lg hover:opacity-90 transition-all glow">
+          Download Free for Windows
+        </a>
+        <a href="https://github.com/arpang12/Wrytica-Word-and-Document-" class="border border-white/20 text-white font-semibold px-8 py-4 rounded-xl text-lg hover:bg-white/5 transition-all flex items-center justify-center gap-2">
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+          View on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
        FOOTER
-  ===================================================== -->
-  <footer>
-    <div class="container">
-      <div class="footer-inner">
-        <div class="footer-copy">
-          &copy; 2024&ndash;2025 Wrytica AI. All rights reserved. Built by <a href="https://www.arpan-guria.in/" target="_blank" rel="noopener" style="color:var(--em-500);font-weight:600;">Arpan Guria</a>.
+       ============================================================ -->
+  <footer class="border-t border-white/5 py-12">
+    <div class="max-w-7xl mx-auto px-6">
+      <div class="grid md:grid-cols-4 gap-8 mb-10">
+        <div class="md:col-span-2">
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-7 h-7 rounded-lg gradient-bg flex items-center justify-center text-white font-bold text-xs">W</div>
+            <span class="font-bold">Wrytica AI</span>
+          </div>
+          <p class="text-gray-500 text-sm leading-relaxed max-w-sm">AI-powered writing assistant that keeps your data private. Free, open-source, and runs on your machine.</p>
         </div>
-        <div class="footer-links">
-          <a href="#" onclick="openModal('privacy-modal');return false;">Privacy Policy</a>
-          <a href="#" onclick="openModal('terms-modal');return false;">Terms of Service</a>
-          <a href="#" onclick="openModal('cookie-modal');return false;">Cookie Policy</a>
+        <div>
+          <p class="text-white font-semibold text-sm mb-3">Product</p>
+          <ul class="space-y-2 text-gray-500 text-sm">
+            <li><a href="#features" class="hover:text-white transition-colors">Features</a></li>
+            <li><a href="#pricing" class="hover:text-white transition-colors">Pricing</a></li>
+            <li><a href="#download" class="hover:text-white transition-colors">Download</a></li>
+            <li><a href="#waitlist" class="hover:text-white transition-colors">Join Waitlist</a></li>
+          </ul>
         </div>
+        <div>
+          <p class="text-white font-semibold text-sm mb-3">Community</p>
+          <ul class="space-y-2 text-gray-500 text-sm">
+            <li><a href="https://github.com/arpang12/Wrytica-Word-and-Document-" class="hover:text-white transition-colors">GitHub</a></li>
+            <li><a href="https://github.com/arpang12/Wrytica-Word-and-Document-/issues" class="hover:text-white transition-colors">Report a Bug</a></li>
+            <li><a href="https://github.com/arpang12/Wrytica-Word-and-Document-/discussions" class="hover:text-white transition-colors">Discussions</a></li>
+            <li><a href="https://github.com/arpang12/Wrytica-Word-and-Document-/releases" class="hover:text-white transition-colors">Releases</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="border-t border-white/5 pt-6 flex flex-col sm:flex-row justify-between items-center gap-3 text-gray-600 text-xs">
+        <p>© 2025 Wrytica AI. Free &amp; open-source.</p>
+        <p>Built with privacy in mind. Your data stays yours.</p>
       </div>
     </div>
   </footer>
 
-  <!-- =====================================================
-       PRIVACY POLICY MODAL
-  ===================================================== -->
-  <div class="modal-backdrop" id="privacy-modal" role="dialog" aria-modal="true" aria-label="Privacy Policy">
-    <div class="modal-box">
-      <button class="modal-close" onclick="closeModal('privacy-modal')" aria-label="Close">&times;</button>
-      <h2>Privacy Policy</h2>
-      <p class="modal-date">Effective Date: 1 January 2025 &nbsp;|&nbsp; Last Updated: April 2025</p>
-
-      <h3>1. Data Controller</h3>
-      <p>Wrytica AI is developed and maintained by <strong>Arpan Guria</strong> ("we", "us", "our"). For all privacy-related enquiries, please contact us via <a href="https://www.arpan-guria.in/" target="_blank" rel="noopener" style="color:var(--em-500);">arpan-guria.in</a>.</p>
-
-      <h3>2. Data We Collect</h3>
-      <p>We collect only the minimum data necessary to provide repository access:</p>
-      <ul>
-        <li><strong>Name:</strong> Provided voluntarily through the access request form.</li>
-        <li><strong>Email address:</strong> Provided voluntarily through the access request form.</li>
-        <li><strong>Use case description:</strong> Optional; provided voluntarily to help us understand your needs.</li>
-      </ul>
-      <p>We do <strong>not</strong> collect: IP addresses, device identifiers, browsing history, cookies, analytics data, payment information, or any data from the Wrytica AI application itself (which runs entirely on your local machine).</p>
-
-      <h3>3. Purpose of Processing</h3>
-      <p>The personal data you provide is used solely for the following purpose:</p>
-      <ul>
-        <li>To send you the GitHub repository link and any related onboarding information.</li>
-        <li>To respond to your support or enquiry messages.</li>
-      </ul>
-      <p>We will not use your data for marketing without separate explicit consent.</p>
-
-      <h3>4. Legal Basis (GDPR Art. 6)</h3>
-      <p>Processing is based on <strong>Article 6(1)(a) GDPR — Consent</strong>. You provide consent when you tick the checkbox and submit the form. You may withdraw consent at any time by contacting us; withdrawal does not affect the lawfulness of processing prior to withdrawal.</p>
-
-      <h3>5. Data Retention</h3>
-      <p>We retain your personal data for a maximum of <strong>12 months</strong> from the date of collection, or until you request deletion — whichever is earlier. After this period, your data is permanently deleted from all systems.</p>
-
-      <h3>6. Your Rights Under GDPR (EU/EEA Residents)</h3>
-      <p>You have the following rights regarding your personal data:</p>
-      <ul>
-        <li><strong>Right of Access (Art. 15):</strong> Request a copy of the data we hold about you.</li>
-        <li><strong>Right to Rectification (Art. 16):</strong> Request correction of inaccurate data.</li>
-        <li><strong>Right to Erasure (Art. 17):</strong> Request deletion of your data ("right to be forgotten").</li>
-        <li><strong>Right to Data Portability (Art. 20):</strong> Receive your data in a machine-readable format.</li>
-        <li><strong>Right to Object (Art. 21):</strong> Object to processing of your data.</li>
-        <li><strong>Right to Withdraw Consent:</strong> Withdraw consent at any time without affecting prior processing.</li>
-      </ul>
-      <p>To exercise any of these rights, contact us via <a href="https://www.arpan-guria.in/" target="_blank" rel="noopener" style="color:var(--em-500);">arpan-guria.in</a>. We will respond within 30 days.</p>
-
-      <h3>7. CCPA Rights (California Residents)</h3>
-      <p>If you are a California resident, you have the following rights under the California Consumer Privacy Act (CCPA):</p>
-      <ul>
-        <li><strong>Right to Know:</strong> Request disclosure of personal information we collect, use, disclose, and sell.</li>
-        <li><strong>Right to Delete:</strong> Request deletion of personal information we have collected.</li>
-        <li><strong>Right to Opt-Out of Sale:</strong> We do <strong>not</strong> sell personal information. This right is not applicable.</li>
-        <li><strong>Right to Non-Discrimination:</strong> We will not discriminate against you for exercising CCPA rights.</li>
-      </ul>
-
-      <h3>8. Data Sharing and Third Parties</h3>
-      <p>Your data is processed by <strong>Formspree, Inc.</strong> (United States) solely to receive and forward form submissions to us. Formspree acts as a data processor under a Data Processing Agreement. International transfers from the EU are covered by Standard Contractual Clauses (SCCs) per GDPR Chapter V.</p>
-      <p>We do not sell, rent, or share your personal data with any other third party.</p>
-
-      <h3>9. International Data Transfers</h3>
-      <p>This website is hosted on <strong>GitHub Pages</strong> (Microsoft Corporation, US). GitHub Pages does not process personal data beyond standard server logs (which we do not access or control). Data submitted via the form is transferred to Formspree servers in the US under appropriate safeguards (SCCs).</p>
-
-      <h3>10. Children's Privacy</h3>
-      <p>Wrytica AI is not directed at individuals under the age of 16. We do not knowingly collect personal data from children. If you believe a child has provided data through this site, please contact us immediately for deletion.</p>
-
-      <h3>11. Security</h3>
-      <p>We implement appropriate technical and organisational measures to protect your personal data against accidental loss, unauthorised access, disclosure, alteration, or destruction. However, no internet transmission is 100% secure.</p>
-
-      <h3>12. Cookies</h3>
-      <p>This website does not use tracking cookies. See our <a href="#" onclick="closeModal('privacy-modal');openModal('cookie-modal');return false;" style="color:var(--em-500);">Cookie Policy</a> for details.</p>
-
-      <h3>13. Changes to This Policy</h3>
-      <p>We may update this Privacy Policy from time to time. The "Last Updated" date at the top will reflect any changes. Continued use of the site after changes constitutes acceptance of the updated policy.</p>
-
-      <h3>14. Contact</h3>
-      <p>For any privacy-related enquiries or to exercise your rights, contact us at: <a href="https://www.arpan-guria.in/" target="_blank" rel="noopener" style="color:var(--em-500);">www.arpan-guria.in</a></p>
-    </div>
-  </div>
-
-  <!-- =====================================================
-       TERMS OF SERVICE MODAL
-  ===================================================== -->
-  <div class="modal-backdrop" id="terms-modal" role="dialog" aria-modal="true" aria-label="Terms of Service">
-    <div class="modal-box">
-      <button class="modal-close" onclick="closeModal('terms-modal')" aria-label="Close">&times;</button>
-      <h2>Terms of Service</h2>
-      <p class="modal-date">Effective Date: 1 January 2025 &nbsp;|&nbsp; Last Updated: April 2025</p>
-
-      <h3>1. Agreement to Terms</h3>
-      <p>By accessing this website or requesting access to the Wrytica AI repository, you agree to be bound by these Terms of Service. If you do not agree, please do not use this site or the software.</p>
-
-      <h3>2. Software License — MIT License</h3>
-      <p>The Wrytica AI software is provided under the <strong>MIT License</strong>:</p>
-      <p style="background:var(--bg3);border:1px solid var(--card-border);border-radius:8px;padding:16px;font-family:'Courier New',monospace;font-size:12px;line-height:1.8;">
-        Copyright (c) 2024–2025 Arpan Guria<br /><br />
-        Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:<br /><br />
-        The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.<br /><br />
-        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-      </p>
-
-      <h3>3. No Warranty</h3>
-      <p>THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. WE MAKE NO WARRANTIES REGARDING THE ACCURACY, RELIABILITY, COMPLETENESS, OR SUITABILITY OF THE SOFTWARE FOR ANY PARTICULAR PURPOSE. USE IS ENTIRELY AT YOUR OWN RISK.</p>
-
-      <h3>4. Limitation of Liability</h3>
-      <p>TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL ARPAN GURIA OR WRYTICA AI BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING BUT NOT LIMITED TO LOSS OF DATA, LOSS OF PROFITS, OR BUSINESS INTERRUPTION) ARISING FROM THE USE OF OR INABILITY TO USE THE SOFTWARE OR THIS WEBSITE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.</p>
-      <p>As this is free, open-source software, the maximum aggregate liability of Arpan Guria for any claims arising under these terms shall be <strong>zero (USD $0)</strong>.</p>
-
-      <h3>5. User Responsibilities</h3>
-      <p>You are solely responsible for:</p>
-      <ul>
-        <li>Obtaining and maintaining your own API keys for third-party services (Google Gemini, Ollama, LM Studio).</li>
-        <li>Complying with the terms of service of any third-party AI providers you connect to Wrytica AI.</li>
-        <li>Ensuring your use of the software complies with all applicable laws in your jurisdiction.</li>
-        <li>The content you process through the application — we have no access to it.</li>
-        <li>Keeping your local installation updated and secure.</li>
-      </ul>
-
-      <h3>6. Acceptable Use</h3>
-      <p>You agree NOT to use this website or software to:</p>
-      <ul>
-        <li>Generate, distribute, or promote illegal content of any kind.</li>
-        <li>Violate any applicable laws or regulations.</li>
-        <li>Infringe on the intellectual property rights of others.</li>
-        <li>Conduct automated scraping, crawling, or data harvesting of this landing page.</li>
-        <li>Attempt to bypass, hack, or disrupt any security measures on this website.</li>
-        <li>Impersonate Wrytica AI or its developer for fraudulent purposes.</li>
-      </ul>
-
-      <h3>7. Third-Party Services</h3>
-      <p>Wrytica AI integrates with optional third-party services (Google Gemini API, Ollama, LM Studio, Formspree). Your use of these services is governed by their respective terms of service and privacy policies. We are not responsible for the availability, accuracy, or practices of any third-party services.</p>
-
-      <h3>8. Intellectual Property</h3>
-      <p>The Wrytica AI name, logo, and branding are the intellectual property of Arpan Guria. The source code is licensed under MIT. The landing page content and design are copyright &copy; 2024–2025 Arpan Guria, all rights reserved.</p>
-
-      <h3>9. GDPR and CCPA Compliance</h3>
-      <p>We are committed to compliance with the General Data Protection Regulation (EU) 2016/679 (GDPR) and the California Consumer Privacy Act (CCPA). For details on how we handle personal data collected through this website, please refer to our Privacy Policy.</p>
-
-      <h3>10. Governing Law and Dispute Resolution</h3>
-      <p>These Terms are governed by the laws of <strong>India</strong>, without regard to conflict of law provisions. Any dispute arising from these Terms or your use of the site or software shall first be attempted to be resolved through good-faith negotiation. If unresolved within 30 days, disputes shall be submitted to binding arbitration in accordance with the Arbitration and Conciliation Act, 1996 (India). You waive any right to a jury trial or class action.</p>
-
-      <h3>11. Changes to Terms</h3>
-      <p>We reserve the right to modify these Terms at any time. Changes will be reflected by updating the "Last Updated" date. Continued use of the site or software after changes constitutes acceptance.</p>
-
-      <h3>12. Severability</h3>
-      <p>If any provision of these Terms is found to be unenforceable, the remaining provisions will continue in full force and effect.</p>
-
-      <h3>13. Contact</h3>
-      <p>For questions about these Terms, contact us at: <a href="https://www.arpan-guria.in/" target="_blank" rel="noopener" style="color:var(--em-500);">www.arpan-guria.in</a></p>
-    </div>
-  </div>
-
-  <!-- =====================================================
-       COOKIE POLICY MODAL
-  ===================================================== -->
-  <div class="modal-backdrop" id="cookie-modal" role="dialog" aria-modal="true" aria-label="Cookie Policy">
-    <div class="modal-box">
-      <button class="modal-close" onclick="closeModal('cookie-modal')" aria-label="Close">&times;</button>
-      <h2>Cookie Policy</h2>
-      <p class="modal-date">Effective Date: 1 January 2025 &nbsp;|&nbsp; Last Updated: April 2025</p>
-
-      <h3>1. Our Cookie Policy: We Don't Use Cookies</h3>
-      <p>Wrytica AI's landing page does <strong>not</strong> use HTTP cookies of any kind — not session cookies, persistent cookies, or tracking cookies. We do not use:</p>
-      <ul>
-        <li>Analytics cookies (no Google Analytics, no Mixpanel, no Hotjar)</li>
-        <li>Advertising or retargeting cookies</li>
-        <li>Social media tracking pixels</li>
-        <li>Cross-site tracking technologies</li>
-        <li>First-party or third-party tracking cookies</li>
-      </ul>
-
-      <h3>2. What We Do Use: localStorage</h3>
-      <p>We use the browser's <strong>localStorage</strong> API (not cookies) for the following strictly necessary functional purposes:</p>
-      <ul>
-        <li><strong>Dark mode preference:</strong> Stores your chosen theme ("light" or "dark") so it persists across page visits. Key: <code style="background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:12px;">wrytica-theme</code></li>
-        <li><strong>Form state:</strong> May temporarily store incomplete form data to prevent loss on accidental navigation. This data is cleared on successful form submission.</li>
-      </ul>
-      <p>localStorage data:</p>
-      <ul>
-        <li>Never leaves your browser — it is stored locally on your device only.</li>
-        <li>Is not transmitted to our servers or any third party.</li>
-        <li>Can be cleared at any time via your browser settings.</li>
-        <li>Does not contain personal data beyond what you have explicitly entered.</li>
-      </ul>
-
-      <h3>3. Third-Party Content and Associated Technologies</h3>
-      <p>This page includes two pieces of third-party content which may set their own cookies or use their own technologies:</p>
-      <ul>
-        <li>
-          <strong>Google Fonts:</strong> We load the Inter typeface from <code style="background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:12px;">fonts.googleapis.com</code>. Google may log the font request (including your IP address) for abuse prevention. Google's privacy policy applies: <a href="https://policies.google.com/privacy" target="_blank" rel="noopener" style="color:var(--em-500);">policies.google.com/privacy</a>.
-        </li>
-        <li>
-          <strong>YouTube Video Embed:</strong> The demo section embeds a YouTube video via <code style="background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:12px;">youtube.com/embed</code>. If you play the video, YouTube (Google) may set cookies and collect data per their privacy policy. The embed is loaded from YouTube's standard domain; YouTube's privacy policy applies.
-        </li>
-      </ul>
-      <p>We have no control over cookies or data collection by Google/YouTube. If you wish to avoid this, you may block these domains using a browser extension such as uBlock Origin or Privacy Badger.</p>
-
-      <h3>4. How to Manage or Clear localStorage</h3>
-      <p>You can clear Wrytica AI's localStorage data at any time:</p>
-      <ul>
-        <li><strong>Chrome/Edge:</strong> DevTools (F12) &rarr; Application &rarr; Storage &rarr; Local Storage &rarr; Select site &rarr; Clear</li>
-        <li><strong>Firefox:</strong> DevTools (F12) &rarr; Storage &rarr; Local Storage &rarr; Select site &rarr; Right-click &rarr; Delete All</li>
-        <li><strong>Safari:</strong> Preferences &rarr; Privacy &rarr; Manage Website Data &rarr; Search "wrytica" &rarr; Remove</li>
-      </ul>
-      <p>Clearing localStorage will reset your dark mode preference to the system default on your next visit.</p>
-
-      <h3>5. Do Not Track</h3>
-      <p>We respect the "Do Not Track" (DNT) browser signal. Since we do not engage in tracking of any kind, this policy applies universally regardless of your DNT setting.</p>
-
-      <h3>6. Changes to This Policy</h3>
-      <p>If we ever introduce cookies or change our localStorage practices, we will update this Cookie Policy and the "Last Updated" date accordingly.</p>
-
-      <h3>7. Contact</h3>
-      <p>For questions about this Cookie Policy, contact us at: <a href="https://www.arpan-guria.in/" target="_blank" rel="noopener" style="color:var(--em-500);">www.arpan-guria.in</a></p>
-    </div>
-  </div>
-
-  <!-- =====================================================
-       JAVASCRIPT
-  ===================================================== -->
+  <!-- Scroll animations -->
   <script>
-    // ---- Dark mode ----
-    (function () {
-      var saved = localStorage.getItem('wrytica-theme');
-      var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      var theme = saved || (prefersDark ? 'dark' : 'light');
-      document.documentElement.setAttribute('data-theme', theme);
-      updateThemeIcon(theme);
-    })();
-
-    function updateThemeIcon(theme) {
-      var sun = document.getElementById('icon-sun');
-      var moon = document.getElementById('icon-moon');
-      if (!sun || !moon) return;
-      if (theme === 'dark') { sun.style.display = 'none'; moon.style.display = 'block'; }
-      else { sun.style.display = 'block'; moon.style.display = 'none'; }
-    }
-
-    document.getElementById('theme-toggle').addEventListener('click', function () {
-      var current = document.documentElement.getAttribute('data-theme');
-      var next = current === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      localStorage.setItem('wrytica-theme', next);
-      updateThemeIcon(next);
-    });
-
-    // ---- Mobile menu ----
-    var menuOpen = false;
-    document.getElementById('hamburger').addEventListener('click', function () {
-      menuOpen = !menuOpen;
-      document.getElementById('mobile-menu').classList.toggle('open', menuOpen);
-    });
-    function closeMobileMenu() {
-      menuOpen = false;
-      document.getElementById('mobile-menu').classList.remove('open');
-    }
-
-    // ---- Modals ----
-    function openModal(id) {
-      document.getElementById(id).classList.add('open');
-      document.body.style.overflow = 'hidden';
-    }
-    function closeModal(id) {
-      document.getElementById(id).classList.remove('open');
-      document.body.style.overflow = '';
-    }
-    document.querySelectorAll('.modal-backdrop').forEach(function (backdrop) {
-      backdrop.addEventListener('click', function (e) {
-        if (e.target === backdrop) { closeModal(backdrop.id); }
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) entry.target.classList.add('visible');
       });
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') {
-        document.querySelectorAll('.modal-backdrop.open').forEach(function (m) { closeModal(m.id); });
-      }
-    });
-
-    // ---- Formspree form submission ----
-    var form = document.getElementById('access-form');
-    if (form) {
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-        var data = new FormData(form);
-        var btn = form.querySelector('button[type="submit"]');
-        btn.textContent = 'Sending...';
-        btn.disabled = true;
-        fetch(form.action, {
-          method: 'POST',
-          body: data,
-          headers: { 'Accept': 'application/json' }
-        }).then(function (res) {
-          if (res.ok) {
-            form.style.display = 'none';
-            document.getElementById('success-msg').style.display = 'block';
-          } else {
-            btn.textContent = 'Error — Try Again';
-            btn.disabled = false;
-          }
-        }).catch(function () {
-          btn.textContent = 'Error — Try Again';
-          btn.disabled = false;
-        });
-      });
-    }
-
-    // ---- Intersection Observer (fade-in on scroll) ----
-    var observer = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('visible');
-          observer.unobserve(entry.target);
-        }
-      });
-    }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
-
-    document.querySelectorAll('.fade-in').forEach(function (el) {
-      observer.observe(el);
-    });
-
-    // Stagger children in grids
-    var grids = ['.features-grid', '.screenshots-grid', '.steps-grid', '.trust-grid'];
-    grids.forEach(function (sel) {
-      var grid = document.querySelector(sel);
-      if (!grid) return;
-      var children = grid.querySelectorAll('.fade-in');
-      children.forEach(function (child, i) {
-        child.style.transitionDelay = (i * 80) + 'ms';
-      });
-    });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('[data-animate]').forEach(el => observer.observe(el));
   </script>
+
 </body>
 </html>

@@ -9,6 +9,7 @@ import { KnowledgeBaseService } from '../services/knowledgeBaseService';
 import { VectorStoreService } from '../services/vectorStoreService';
 import { StorageService } from '../services/storageService';
 import { WorkspaceService, WorkspaceHandle } from '../services/workspaceService';
+import { ImageAssetStore } from '../services/imageAssetStore';
 
 
 const safeLoad = <T,>(key: string, fallback: T): T => {
@@ -31,6 +32,19 @@ const safeSave = (key: string, value: any) => {
     } else {
       console.error('SafeSave failed:', e);
     }
+  }
+};
+
+const tryParseJsonArray = <T,>(raw: string | null, label: string): T[] => {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as T[];
+    console.warn(`[AppContext] ${label} is not an array`);
+    return [];
+  } catch (error) {
+    console.warn(`[AppContext] Failed parsing ${label}:`, error);
+    return [];
   }
 };
 
@@ -80,7 +94,7 @@ interface AppContextType {
   loadChatSession: (sessionId: string) => void;
   deleteChatSession: (sessionId: string) => void;
   updateChatSessionMessages: (sessionId: string, messages: ChatMessage[]) => void;
-  syncChatSessionToMemory: (sessionId: string) => void;
+  syncChatSessionToMemory: (sessionId: string) => Promise<void>;
   // In-progress input persistence
 
   saveInputText: (tool: string, text: string) => void;
@@ -100,11 +114,11 @@ interface AppContextType {
   hasGPU: boolean;
   selfImproveEnabled: boolean;
   setSelfImproveEnabled: (val: boolean) => void;
-  knowledgeBase: KnowledgeDocument[];
-  addKnowledgeDocument: (doc: KnowledgeDocument) => void;
+      knowledgeBase: KnowledgeDocument[];
+  addKnowledgeDocument: (doc: KnowledgeDocument, rawPageImages?: string[]) => Promise<void>;
   addKnowledgeDocumentsBatch: (docs: KnowledgeDocument[]) => Promise<void>;
-  updateKnowledgeDocument: (doc: KnowledgeDocument) => void;
-  removeKnowledgeDocument: (id: string) => void;
+  updateKnowledgeDocument: (doc: KnowledgeDocument, rawPageImages?: string[]) => Promise<void>;
+  removeKnowledgeDocument: (id: string) => Promise<void>;
 
   guardrails: Guardrail[];
   addGuardrail: (guardrail: Guardrail) => void;
@@ -126,7 +140,7 @@ interface AppContextType {
   workspaceSyncError: string | null;
 
   // Memory Stats
-  getMemoryStats: () => Promise<{ kbDocs: number; kbChunks: number; chatSessions: number; vectors: number; historyEntries: number; kbSizeMB: number; chatSizeMB: number; historySizeMB: number; totalSizeMB: number; diskSizeMB: number; diskFiles: number; diskCacheTimestamp: number | null }>;
+  getMemoryStats: () => Promise<{ kbDocs: number; kbChunks: number; chatSessions: number; vectors: number; historyEntries: number; kbSizeMB: number; chatSizeMB: number; historySizeMB: number; imageAssetCount: number; imageAssetSizeMB: number; totalSizeMB: number; diskSizeMB: number; diskFiles: number; diskCacheTimestamp: number | null }>;
   setBulkIngestionInProgress: (value: boolean) => void;
   exportMemoryStats: () => string;
   clearMemory: (target: 'knowledge' | 'chat' | 'history' | 'vectors' | 'all') => Promise<void>;
@@ -178,6 +192,28 @@ const MAX_HISTORY_ENTRIES = 200;
   const [isStorageLoading, setIsStorageLoading] = useState<boolean>(true);
   const syncTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const [cachedDiskUsage, setCachedDiskUsage] = useState<{ sizeMB: number; files: number; timestamp: number } | null>(null);
+
+  const loadWorkspaceMirrorData = React.useCallback(async (handle: WorkspaceHandle): Promise<{ knowledgeBase: KnowledgeDocument[]; chatSessions: ChatSession[] }> => {
+    const [knowledgeRaw, sessionsRaw] = await Promise.all([
+      WorkspaceService.readFile(handle.directory, 'knowledge_base.json'),
+      WorkspaceService.readFile(handle.directory, 'chat_sessions.json')
+    ]);
+
+    const knowledgeBase = tryParseJsonArray<KnowledgeDocument>(knowledgeRaw, 'knowledge_base.json');
+    const chatSessions = tryParseJsonArray<ChatSession>(sessionsRaw, 'chat_sessions.json');
+
+    console.info('[AppContext] Workspace mirror load result', {
+      workspace: handle.name,
+      isElectron: handle.isElectron === true || typeof handle.directory === 'string',
+      directoryType: typeof handle.directory,
+      hasKnowledgeFile: knowledgeRaw !== null,
+      hasChatSessionsFile: sessionsRaw !== null,
+      knowledgeDocs: knowledgeBase.length,
+      chatSessions: chatSessions.length,
+    });
+
+    return { knowledgeBase, chatSessions };
+  }, []);
 
   // Cleanup timeout on unmount
   React.useEffect(() => {
@@ -375,19 +411,41 @@ const MAX_HISTORY_ENTRIES = 200;
           setKnowledgeBase(kb);
         } else {
           // Fallback: Check if there's a pre-built knowledge base in public/local_knowledge.json
-          try {
-            const response = await fetch('/local_knowledge.json');
-            if (response.ok) {
+          const localKnowledgeCandidates = new Set<string>(['/local_knowledge.json', './local_knowledge.json']);
+          const baseUrl = (import.meta as any)?.env?.BASE_URL as string | undefined;
+          if (baseUrl) {
+            const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+            localKnowledgeCandidates.add(`${normalizedBase}local_knowledge.json`);
+          }
+          if (typeof window !== 'undefined' && window.location?.href) {
+            try {
+              localKnowledgeCandidates.add(new URL('local_knowledge.json', window.location.href).toString());
+            } catch {
+              // ignore invalid URL construction
+            }
+          }
+
+          for (const candidateUrl of localKnowledgeCandidates) {
+            try {
+              const response = await fetch(candidateUrl);
+              if (!response.ok) {
+                console.info('[AppContext] local_knowledge fetch miss', { candidateUrl, status: response.status });
+                continue;
+              }
+
               const localKB = await response.json();
               if (Array.isArray(localKB) && localKB.length > 0) {
-                console.log('Loading pre-built knowledge base from local_knowledge.json...');
+                console.info('[AppContext] Loaded pre-built knowledge base fallback', {
+                  candidateUrl,
+                  count: localKB.length,
+                });
                 setKnowledgeBase(localKB);
-                // Also save to IndexedDB so it's faster next time
                 await StorageService.bulkPut('knowledgeBase', localKB);
+                break;
               }
+            } catch (e) {
+              console.info('[AppContext] local_knowledge fetch failed', { candidateUrl, error: String(e) });
             }
-          } catch (e) {
-            console.warn('Could not load local_knowledge.json fallback:', e);
           }
         }
         
@@ -417,20 +475,53 @@ const MAX_HISTORY_ENTRIES = 200;
           const handle = workspaceSetting.value as WorkspaceHandle;
           if (handle.directory) {
             try {
-              // Check if we still have permission
-              // @ts-ignore - queryPermission exists in browser API but not in TypeScript types
-              const permission = await handle.directory.queryPermission({ mode: 'readwrite' });
-              if (permission === 'granted') {
+              const isElectronHandle = handle.isElectron === true || typeof handle.directory === 'string';
+
+              if (isElectronHandle) {
+                console.info('[AppContext] Restoring Electron workspace handle', {
+                  workspace: handle.name,
+                  directoryType: typeof handle.directory,
+                });
                 setWorkspaceHandle(handle);
                 const savedMode = localStorage.getItem('wrytica_storage_mode');
                 if (savedMode === 'hybrid' || savedMode === 'native') {
                   setStorageModeState(savedMode as any);
                 }
+
+                const workspaceData = await loadWorkspaceMirrorData(handle);
+                if (workspaceData.knowledgeBase.length > 0) {
+                  knowledgeBaseRef.current = workspaceData.knowledgeBase;
+                  startTransition(() => setKnowledgeBase(workspaceData.knowledgeBase));
+                  await StorageService.clear('knowledgeBase');
+                  await StorageService.bulkPutOptimized('knowledgeBase', workspaceData.knowledgeBase, { batchSize: 50, yieldInterval: 50 });
+                }
+
+                if (workspaceData.chatSessions.length > 0) {
+                  setChatSessions(workspaceData.chatSessions);
+                  await StorageService.clear('chatSessions');
+                  await StorageService.bulkPutOptimized('chatSessions', workspaceData.chatSessions, { batchSize: 20, yieldInterval: 20 });
+                }
               } else {
-                setWorkspaceHandle(null);
-                setStorageModeState('standard');
-                safeSave('wrytica_storage_mode', 'standard');
-                StorageService.delete('settings', 'workspaceHandle');
+                const browserHandle = handle.directory as FileSystemDirectoryHandle;
+                const queryPermission = (browserHandle as any).queryPermission;
+                if (typeof queryPermission !== 'function') {
+                  throw new Error('Invalid browser workspace handle: queryPermission() missing');
+                }
+
+                // @ts-ignore - queryPermission exists in browser API but not in TypeScript types
+                const permission = await queryPermission.call(browserHandle, { mode: 'readwrite' });
+                if (permission === 'granted') {
+                  setWorkspaceHandle(handle);
+                  const savedMode = localStorage.getItem('wrytica_storage_mode');
+                  if (savedMode === 'hybrid' || savedMode === 'native') {
+                    setStorageModeState(savedMode as any);
+                  }
+                } else {
+                  setWorkspaceHandle(null);
+                  setStorageModeState('standard');
+                  safeSave('wrytica_storage_mode', 'standard');
+                  StorageService.delete('settings', 'workspaceHandle');
+                }
               }
             } catch (e) {
               console.error('Failed to verify workspace permission:', e);
@@ -457,7 +548,7 @@ const MAX_HISTORY_ENTRIES = 200;
     };
 
     initializeStorage();
-  }, []);
+  }, [loadWorkspaceMirrorData]);
 
   const connectWorkspace = async () => {
     const handle = await WorkspaceService.requestFolder();
@@ -471,26 +562,23 @@ const MAX_HISTORY_ENTRIES = 200;
       
       // Load existing data from the workspace if it exists
       try {
-        const kbContent = await WorkspaceService.readFile(handle.directory, 'knowledge_base.json');
-        if (kbContent) {
-          const kbData = JSON.parse(kbContent);
-          if (Array.isArray(kbData) && kbData.length > 0) {
-            console.log(`Loaded ${kbData.length} documents from workspace knowledge_base.json`);
-            // Merge or replace? For now, we'll replace with workspace data if it's not empty
-            setKnowledgeBase(kbData);
-            await StorageService.clear('knowledgeBase');
-            await StorageService.bulkPut('knowledgeBase', kbData);
-          }
+        const workspaceData = await loadWorkspaceMirrorData(handle);
+
+        if (workspaceData.knowledgeBase.length > 0) {
+          console.info('[AppContext] Connected workspace knowledge base loaded', {
+            workspace: handle.name,
+            count: workspaceData.knowledgeBase.length,
+          });
+          knowledgeBaseRef.current = workspaceData.knowledgeBase;
+          startTransition(() => setKnowledgeBase(workspaceData.knowledgeBase));
+          await StorageService.clear('knowledgeBase');
+          await StorageService.bulkPutOptimized('knowledgeBase', workspaceData.knowledgeBase, { batchSize: 50, yieldInterval: 50 });
         }
-        
-        const chatSessionsContent = await WorkspaceService.readFile(handle.directory, 'chat_sessions.json');
-        if (chatSessionsContent) {
-          const sessionsData = JSON.parse(chatSessionsContent);
-          if (Array.isArray(sessionsData) && sessionsData.length > 0) {
-            setChatSessions(sessionsData);
-            await StorageService.clear('chatSessions');
-            await StorageService.bulkPut('chatSessions', sessionsData);
-          }
+
+        if (workspaceData.chatSessions.length > 0) {
+          setChatSessions(workspaceData.chatSessions);
+          await StorageService.clear('chatSessions');
+          await StorageService.bulkPutOptimized('chatSessions', workspaceData.chatSessions, { batchSize: 20, yieldInterval: 20 });
         }
       } catch (e) {
         console.warn('Failed to load existing data from workspace:', e);
@@ -632,7 +720,7 @@ const MAX_HISTORY_ENTRIES = 200;
   };
 
 
-  const syncChatSessionToMemory = (sessionId: string) => {
+  const syncChatSessionToMemory = async (sessionId: string) => {
     const session = chatSessions.find(s => s.id === sessionId);
     if (!session || session.messages.length < 2) return;
 
@@ -699,50 +787,76 @@ const MAX_HISTORY_ENTRIES = 200;
     return hints.join(' ');
   };
 
-  const addKnowledgeDocument = (doc: KnowledgeDocument) => {
-    // Strip large page images before storing to save memory
-    const lightweightDoc = {
-      ...doc,
-      pageImages: undefined // Don't store base64 images in memory
-    };
-    let nextKnowledgeBase: KnowledgeDocument[] | null = null;
+  const persistKnowledgeBaseState = async (docs: KnowledgeDocument[]) => {
+    if (storageMode === 'hybrid' && workspaceHandle) {
+      const ok = await WorkspaceService.writeFile(workspaceHandle.directory, 'knowledge_base.json', JSON.stringify(docs));
+      if (!ok) {
+        setWorkspaceHandle(null);
+        setStorageModeState('standard');
+        safeSave('wrytica_storage_mode', 'standard');
+        StorageService.delete('settings', 'workspaceHandle');
+        setCachedDiskUsage(null);
+        setWorkspaceSyncError('Workspace sync failed. Reconnect the folder to allow saving.');
+        return;
+      }
+      setWorkspaceSyncError(null);
+      return;
+    }
+    debouncedSync();
+  };
+
+  const toLightweightKnowledgeDoc = (doc: KnowledgeDocument): KnowledgeDocument => ({
+    ...doc,
+    content: doc.content?.substring(0, 15000),
+  });
+
+  const addKnowledgeDocument = async (doc: KnowledgeDocument, rawPageImages?: string[]) => {
+    let finalDoc = doc;
+    if (rawPageImages?.length) {
+      const refs = await ImageAssetStore.saveAssetsForDoc(doc.id, rawPageImages);
+      finalDoc = { ...doc, pageImageRefs: refs };
+    }
+
+    const lightweightDoc = toLightweightKnowledgeDoc(finalDoc);
+    let nextKnowledgeBase: KnowledgeDocument[] = [];
+    const removedIds: string[] = [];
+
     setKnowledgeBase(prev => {
-      const updated = [lightweightDoc, ...prev];
+      const updated = [lightweightDoc, ...prev.filter(item => item.id !== lightweightDoc.id)];
       if (updated.length > MAX_KNOWLEDGE_DOCS) {
-        // Remove oldest docs from storage
-        const toRemove = updated.slice(MAX_KNOWLEDGE_DOCS).map(d => d.id);
-        toRemove.forEach(id => {
-          StorageService.delete('knowledgeBase', id);
-          VectorStoreService.removeDocument(id);
-        });
+        removedIds.push(...updated.slice(MAX_KNOWLEDGE_DOCS).map(d => d.id));
         nextKnowledgeBase = updated.slice(0, MAX_KNOWLEDGE_DOCS);
+        knowledgeBaseRef.current = nextKnowledgeBase;
         return nextKnowledgeBase;
       }
       nextKnowledgeBase = updated;
+      knowledgeBaseRef.current = updated;
       return updated;
     });
-    StorageService.put('knowledgeBase', lightweightDoc);
-    if (storageMode === 'hybrid' && workspaceHandle) {
-      if (nextKnowledgeBase) {
-        WorkspaceService.writeFile(workspaceHandle.directory, 'knowledge_base.json', JSON.stringify(nextKnowledgeBase)).then(ok => {
-          if (ok) {
-            setWorkspaceSyncError(null);
-          } else {
-            setWorkspaceHandle(null);
-            setStorageModeState('standard');
-            safeSave('wrytica_storage_mode', 'standard');
-            StorageService.delete('settings', 'workspaceHandle');
-            setCachedDiskUsage(null);
-            setWorkspaceSyncError('Workspace sync failed. Reconnect the folder to allow saving.');
-          }
-        });
-      } else {
-        debouncedSync();
-      }
+
+    knowledgeBaseRef.current = nextKnowledgeBase;
+    await StorageService.put('knowledgeBase', lightweightDoc);
+    for (const removedId of removedIds) {
+      await StorageService.delete('knowledgeBase', removedId);
+      VectorStoreService.removeDocument(removedId);
+      await ImageAssetStore.deleteAssetsForDoc(removedId);
     }
+
     if (retrievalMode === 'hybrid') {
       VectorStoreService.upsertDocument(lightweightDoc);
     }
+
+    if (lightweightDoc.source === 'OCR import' || lightweightDoc.tags?.includes('ocr')) {
+      console.info('[KnowledgeBase] OCR document persisted', {
+        id: lightweightDoc.id,
+        title: lightweightDoc.title,
+        source: lightweightDoc.source,
+        chunkCount: lightweightDoc.chunks?.length || 0,
+        pageImageRefCount: lightweightDoc.pageImageRefs?.length || 0,
+      });
+    }
+
+    await persistKnowledgeBaseState(nextKnowledgeBase);
   };
 
   // Ref to store latest knowledge base for vector rebuild (avoids stale closure)
@@ -755,12 +869,7 @@ const MAX_HISTORY_ENTRIES = 200;
   const bulkIngestionInProgressRef = React.useRef(false);
 
   const addKnowledgeDocumentsBatch = async (docs: KnowledgeDocument[]) => {
-    // Strip page images from all docs for memory efficiency
-    const lightweightDocs = docs.map(doc => ({
-      ...doc,
-      pageImages: undefined, // Remove heavy image data
-      content: doc.content?.substring(0, 15000) // Limit content length (reduced from 25000)
-    }));
+    const lightweightDocs = docs.map(toLightweightKnowledgeDoc);
 
     // Small batches + frequent yields to avoid RESULT_CODE_HUNG (main thread must not block)
     const batchSize = 15;
@@ -779,11 +888,13 @@ const MAX_HISTORY_ENTRIES = 200;
             if (updated.length > MAX_KNOWLEDGE_DOCS) {
               const toRemove = updated.slice(MAX_KNOWLEDGE_DOCS).map(d => d.id);
               toRemove.forEach(id => {
-                StorageService.delete('knowledgeBase', id);
+                void StorageService.delete('knowledgeBase', id);
                 VectorStoreService.removeDocument(id);
+                void ImageAssetStore.deleteAssetsForDoc(id);
               });
               return updated.slice(0, MAX_KNOWLEDGE_DOCS);
             }
+            knowledgeBaseRef.current = updated;
             return updated;
           });
         });
@@ -826,12 +937,23 @@ const MAX_HISTORY_ENTRIES = 200;
     debouncedSync();
   };
 
-  const updateKnowledgeDocument = (doc: KnowledgeDocument) => {
-    // Strip page images to save memory
-    const lightweightDoc = { ...doc, pageImages: undefined, content: doc.content?.substring(0, 25000) };
+  const updateKnowledgeDocument = async (doc: KnowledgeDocument, rawPageImages?: string[]) => {
+    // If raw images are provided, save them to the asset store
+    if (rawPageImages && rawPageImages.length > 0) {
+      // Delete old assets first (if any)
+      await ImageAssetStore.deleteAssetsForDoc(doc.id);
+      // Save new images
+      const refs = await ImageAssetStore.saveAssetsForDoc(doc.id, rawPageImages);
+      doc = { ...doc, pageImageRefs: refs };
+    }
+    const lightweightDoc = { ...doc, content: doc.content?.substring(0, 25000) };
+    const nextKnowledgeBase = knowledgeBaseRef.current.map(item => item.id === doc.id ? lightweightDoc : item);
+    knowledgeBaseRef.current = nextKnowledgeBase;
     setKnowledgeBase(prev => prev.map(item => item.id === doc.id ? lightweightDoc : item));
-    StorageService.put('knowledgeBase', lightweightDoc);
+    await StorageService.put('knowledgeBase', lightweightDoc);
     if (storageMode === 'hybrid' && workspaceHandle) {
+      await persistKnowledgeBaseState(nextKnowledgeBase);
+    } else {
       debouncedSync();
     }
     if (retrievalMode === 'hybrid') {
@@ -839,13 +961,18 @@ const MAX_HISTORY_ENTRIES = 200;
     }
   };
 
-  const removeKnowledgeDocument = (id: string) => {
+  const removeKnowledgeDocument = async (id: string) => {
+    const nextKnowledgeBase = knowledgeBaseRef.current.filter(item => item.id !== id);
+    knowledgeBaseRef.current = nextKnowledgeBase;
     setKnowledgeBase(prev => prev.filter(item => item.id !== id));
-    StorageService.delete('knowledgeBase', id);
+    await StorageService.delete('knowledgeBase', id);
+    await ImageAssetStore.deleteAssetsForDoc(id);
+    VectorStoreService.removeDocument(id);
     if (storageMode === 'hybrid' && workspaceHandle) {
+      await persistKnowledgeBaseState(nextKnowledgeBase);
+    } else {
       debouncedSync();
     }
-    VectorStoreService.removeDocument(id);
   };
 
 
@@ -1003,10 +1130,13 @@ const MAX_HISTORY_ENTRIES = 200;
       return acc + (entry.input?.length || 0) + (entry.output?.length || 0);
     }, 0);
 
+    const imageAssetStats = await ImageAssetStore.getStats();
+
     const kbSizeMB = (kbSizeBytes / (1024 * 1024)).toFixed(1);
     const chatSizeMB = (chatSizeBytes / (1024 * 1024)).toFixed(1);
     const historySizeMB = (historySizeBytes / (1024 * 1024)).toFixed(1);
-    const totalSizeMB = (parseFloat(kbSizeMB) + parseFloat(chatSizeMB) + parseFloat(historySizeMB)).toFixed(1);
+    const imageAssetSizeMB = (imageAssetStats.sizeBytes / (1024 * 1024)).toFixed(1);
+    const totalSizeMB = (parseFloat(kbSizeMB) + parseFloat(chatSizeMB) + parseFloat(historySizeMB) + parseFloat(imageAssetSizeMB)).toFixed(1);
 
     // Calculate disk usage in hybrid mode - use cache if available and fresh (< 5 min old)
     let diskSizeMB = 0;
@@ -1041,6 +1171,8 @@ const MAX_HISTORY_ENTRIES = 200;
       kbSizeMB: parseFloat(kbSizeMB),
       chatSizeMB: parseFloat(chatSizeMB),
       historySizeMB: parseFloat(historySizeMB),
+      imageAssetCount: imageAssetStats.count,
+      imageAssetSizeMB: parseFloat(imageAssetSizeMB),
       totalSizeMB: parseFloat(totalSizeMB),
       diskSizeMB,
       diskFiles,
@@ -1052,6 +1184,8 @@ const MAX_HISTORY_ENTRIES = 200;
   const clearKnowledgeBase = async () => {
     setKnowledgeBase([]);
     await StorageService.clear('knowledgeBase');
+    // Also clear associated image assets
+    await ImageAssetStore.clearAll();
     if (retrievalMode === 'hybrid') {
       await VectorStoreService.clear();
     }
@@ -1089,8 +1223,12 @@ const MAX_HISTORY_ENTRIES = 200;
         title: doc.title,
         chunks: doc.chunks?.length || 0,
         tags: doc.tags,
-        createdAt: doc.createdAt
+        createdAt: doc.createdAt,
+        pageImageRefs: doc.pageImageRefs?.length || 0
       })),
+      imageAssets: {
+        estimatedCount: knowledgeBase.reduce((acc, doc) => acc + (doc.pageImageRefs?.length || 0), 0)
+      },
       chatSessions: chatSessions.map(s => ({
         id: s.id,
         title: s.title,

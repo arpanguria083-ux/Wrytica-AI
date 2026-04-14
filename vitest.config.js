@@ -8,6 +8,13 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', '**/*.test.ts'],
+    exclude: [
+      '**/node_modules/**',
+      '**/.claude/**',
+      '**/dist/**',
+      '**/dist-electron/**',
+      '**/dist-electron-release/**',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

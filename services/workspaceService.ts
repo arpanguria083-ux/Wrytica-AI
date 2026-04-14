@@ -1,6 +1,15 @@
+import { isDesktopRuntime } from './runtimeConfig';
+
+const decodeBase64Utf8 = (base64: string): string => {
+  const binary = atob(base64);
+  const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+};
+
 export interface WorkspaceHandle {
-  directory: FileSystemDirectoryHandle;
+  directory: FileSystemDirectoryHandle | string;
   name: string;
+  isElectron?: boolean;
 }
 
 const isPermissionError = (err: unknown): boolean => {
@@ -27,6 +36,18 @@ const ensurePermission = async (
 
 export const WorkspaceService = {
   async requestFolder(): Promise<WorkspaceHandle | null> {
+    if (isDesktopRuntime() && window.electronAPI) {
+      const folderPath = await window.electronAPI.dialog.openDirectory();
+      if (folderPath) {
+        return {
+          directory: folderPath,
+          name: folderPath.split(/[/\\]/).pop() || 'Workspace',
+          isElectron: true
+        };
+      }
+      return null;
+    }
+
     try {
       // @ts-ignore - showDirectoryPicker is experimental but supported in Chrome/Edge
       const handle = await window.showDirectoryPicker({
@@ -34,7 +55,8 @@ export const WorkspaceService = {
       });
       return {
         directory: handle,
-        name: handle.name
+        name: handle.name,
+        isElectron: false
       };
     } catch (err) {
       console.error('Failed to get directory handle:', err);
@@ -42,7 +64,18 @@ export const WorkspaceService = {
     }
   },
 
-  async writeFile(dirHandle: FileSystemDirectoryHandle, fileName: string, content: string): Promise<boolean> {
+  async writeFile(dirHandle: FileSystemDirectoryHandle | string, fileName: string, content: string): Promise<boolean> {
+    if (isDesktopRuntime() && window.electronAPI && typeof dirHandle === 'string') {
+      const filePath = `${dirHandle}/${fileName}`;
+      const result = await window.electronAPI.fs.writeFile(filePath, content);
+      return result.success;
+    }
+
+    if (typeof dirHandle === 'string') {
+      console.error('String directory handle used in browser mode');
+      return false;
+    }
+
     try {
       const allowed = await ensurePermission(dirHandle, 'readwrite');
       if (!allowed) return false;
@@ -59,7 +92,21 @@ export const WorkspaceService = {
     }
   },
 
-  async readFile(dirHandle: FileSystemDirectoryHandle, fileName: string): Promise<string | null> {
+  async readFile(dirHandle: FileSystemDirectoryHandle | string, fileName: string): Promise<string | null> {
+    if (isDesktopRuntime() && window.electronAPI && typeof dirHandle === 'string') {
+      const filePath = `${dirHandle}/${fileName}`;
+      const result = await window.electronAPI.fs.readFile(filePath);
+      if (result.success && result.data) {
+        return decodeBase64Utf8(result.data);
+      }
+      return null;
+    }
+
+    if (typeof dirHandle === 'string') {
+      console.error('String directory handle used in browser mode');
+      return null;
+    }
+
     try {
       const allowed = await ensurePermission(dirHandle, 'read');
       if (!allowed) return null;
@@ -73,7 +120,22 @@ export const WorkspaceService = {
     }
   },
 
-  async listFiles(dirHandle: FileSystemDirectoryHandle): Promise<string[]> {
+  async listFiles(dirHandle: FileSystemDirectoryHandle | string): Promise<string[]> {
+    if (isDesktopRuntime() && window.electronAPI && typeof dirHandle === 'string') {
+      const result = await window.electronAPI.fs.readDir(dirHandle);
+      if (result.success && result.entries) {
+        return result.entries
+          .filter(entry => entry.isFile)
+          .map(entry => entry.name);
+      }
+      return [];
+    }
+
+    if (typeof dirHandle === 'string') {
+      console.error('String directory handle used in browser mode');
+      return [];
+    }
+
     const files: string[] = [];
     try {
       const allowed = await ensurePermission(dirHandle, 'read');
@@ -92,7 +154,32 @@ export const WorkspaceService = {
     return files;
   },
 
-  async getDiskUsage(dirHandle: FileSystemDirectoryHandle): Promise<{ fileName: string; sizeBytes: number }[]> {
+  async getDiskUsage(dirHandle: FileSystemDirectoryHandle | string): Promise<{ fileName: string; sizeBytes: number }[]> {
+    if (isDesktopRuntime() && window.electronAPI && typeof dirHandle === 'string') {
+      const result = await window.electronAPI.fs.readDir(dirHandle);
+      if (result.success && result.entries) {
+        const files: { fileName: string; sizeBytes: number }[] = [];
+        for (const entry of result.entries.filter(e => e.isFile)) {
+          const filePath = `${dirHandle}/${entry.name}`;
+          const readResult = await window.electronAPI.fs.readFile(filePath);
+          if (readResult.success) {
+            const content = readResult.data ? atob(readResult.data) : '';
+            files.push({
+              fileName: entry.name,
+              sizeBytes: new Blob([content]).size
+            });
+          }
+        }
+        return files;
+      }
+      return [];
+    }
+
+    if (typeof dirHandle === 'string') {
+      console.error('String directory handle used in browser mode');
+      return [];
+    }
+
     const files: { fileName: string; sizeBytes: number }[] = [];
     try {
       const allowed = await ensurePermission(dirHandle, 'read');

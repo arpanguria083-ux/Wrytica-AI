@@ -11,7 +11,7 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isDark, setIsDark] = useState(false);
-  const { config, updateConfig, currentUsage, usagePercentage, isOverLimit, language, setLanguage, guardrails, selectedGuardrailId, setSelectedGuardrailId, hasGPU, getMemoryStats, retrievalMode, clearMemory, exportMemoryStats, storageMode } = useAppContext();
+  const { config, updateConfig, currentUsage, usagePercentage, isOverLimit, language, setLanguage, guardrails, selectedGuardrailId, setSelectedGuardrailId, hasGPU, getMemoryStats, retrievalMode, clearMemory, exportMemoryStats, storageMode, knowledgeBase } = useAppContext();
   const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
   const [isGuardrailMenuOpen, setIsGuardrailMenuOpen] = useState(false);
   const [isMemMonitorOpen, setIsMemMonitorOpen] = useState(false);
@@ -20,14 +20,14 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const activeGuardrail = guardrails.find(g => g.id === selectedGuardrailId) || null;
 
   // Memory stats (async)
-  const [memStats, setMemStats] = useState<{ kbDocs: number; kbChunks: number; chatSessions: number; vectors: number; historyEntries: number; kbSizeMB: number; chatSizeMB: number; historySizeMB: number; totalSizeMB: number; diskSizeMB: number; diskFiles: number; diskCacheTimestamp: number | null } | null>(null);
+  const [memStats, setMemStats] = useState<{ kbDocs: number; kbChunks: number; chatSessions: number; vectors: number; historyEntries: number; kbSizeMB: number; chatSizeMB: number; historySizeMB: number; imageAssetCount: number; imageAssetSizeMB: number; totalSizeMB: number; diskSizeMB: number; diskFiles: number; diskCacheTimestamp: number | null } | null>(null);
 
   useEffect(() => {
     getMemoryStats().then(setMemStats);
-  }, [storageMode, retrievalMode]);
+  }, [storageMode, retrievalMode, knowledgeBase.length]);
 
   // Default stats when loading
-  const defaultStats = { kbDocs: 0, kbChunks: 0, chatSessions: 0, vectors: 0, historyEntries: 0, kbSizeMB: 0, chatSizeMB: 0, historySizeMB: 0, totalSizeMB: 0, diskSizeMB: 0, diskFiles: 0, diskCacheTimestamp: null };
+  const defaultStats = { kbDocs: 0, kbChunks: 0, chatSessions: 0, vectors: 0, historyEntries: 0, kbSizeMB: 0, chatSizeMB: 0, historySizeMB: 0, imageAssetCount: 0, imageAssetSizeMB: 0, totalSizeMB: 0, diskSizeMB: 0, diskFiles: 0, diskCacheTimestamp: null };
 
   // Format cache timestamp
   const formatCacheTime = (timestamp: number | null) => {
@@ -236,6 +236,13 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                         <span>Knowledge Base</span>
                       </span>
                       <span className={`font-mono ${kbWarning.critical ? 'text-red-600 dark:text-red-400 font-bold' : kbWarning.warn ? 'text-amber-600 dark:text-amber-400' : 'text-slate-800 dark:text-slate-200'}`}>{stats.kbDocs}/{LIMITS.kbDocs} docs · {stats.kbChunks} chunks {stats.kbSizeMB > 0 && <span className="text-blue-500 text-[10px]">({stats.kbSizeMB} MB)</span>}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
+                        <Database size={12} className="text-fuchsia-500" />
+                        <span>Vision Assets</span>
+                      </span>
+                      <span className="font-mono text-slate-800 dark:text-slate-200">{stats.imageAssetCount} {stats.imageAssetSizeMB > 0 && <span className="text-fuchsia-500 text-[10px]">({stats.imageAssetSizeMB} MB)</span>}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className={`flex items-center gap-1.5 ${chatWarning.critical ? 'text-red-600 dark:text-red-400' : chatWarning.warn ? 'text-amber-600 dark:text-amber-400' : 'text-slate-600 dark:text-slate-400'}`}>

@@ -37,14 +37,31 @@ export interface BatchedProcessingOptions {
     skipped: number;
     duplicates: number;
     documents: KnowledgeDocument[];
-  }) => void;
+  }) => void | Promise<void>;
   onComplete: (results: {
     totalSuccess: number;
     totalFailed: number;
     totalSkipped: number;
     totalDuplicates: number;
-  }) => void;
+  }) => void | Promise<void>;
   onCancel: () => boolean;
+}
+
+const CLIENT_TEXT_EXTENSIONS = new Set([
+  '.txt', '.md', '.json', '.csv', '.ts', '.tsx', '.js', '.jsx',
+  '.py', '.html', '.css', '.xml', '.yaml', '.yml', '.log', '.java',
+  '.c', '.cpp', '.h', '.hpp', '.go', '.rs', '.sql', '.sh', '.bat', '.ps1',
+  '.rst', '.adoc', '.tex', '.rtf'
+]);
+
+function getFileExtension(fileName: string): string {
+  const index = fileName.lastIndexOf('.');
+  return index >= 0 ? fileName.substring(index).toLowerCase() : '';
+}
+
+function canClientExtract(fileName: string): boolean {
+  const ext = getFileExtension(fileName);
+  return ext === '.pdf' || CLIENT_TEXT_EXTENSIONS.has(ext);
 }
 
 /**
@@ -77,6 +94,35 @@ export async function processFilesBatched(options: BatchedProcessingOptions): Pr
 
   console.log(`[BatchedProcessor] Starting batched processing: ${files.length} files in ${totalBatches} batches`);
   console.log(`[BatchedProcessor] Batch size: ${batchSize}, Delays: ${delayBetweenFiles}ms (files), ${delayBetweenBatches}ms (batches)`);
+
+  const processClientSideFile = async (file: File): Promise<KnowledgeDocument | null> => {
+    if (!canClientExtract(file.name)) {
+      console.warn(`[BatchedProcessor] Client extraction unsupported for extension: ${file.name}`);
+      return null;
+    }
+
+    const isPdf = file.name.toLowerCase().endsWith('.pdf');
+    const text = isPdf
+      ? (await extractPdfTextWithOffloading(file, { maxPages: 10 })).text
+      : await file.text();
+
+    if (!text || text.trim().length === 0) {
+      return null;
+    }
+
+    const truncatedContent = text.length > maxStoredContentLength
+      ? `${text.substring(0, maxStoredContentLength)}\n\n[Truncated: ${text.length} total chars]`
+      : text;
+
+    return KnowledgeBaseService.createIngestedDocument({
+      title: file.name,
+      content: truncatedContent,
+      chunkSourceContent: text,
+      source: `Local: ${source}`,
+      tags: tags.length ? tags : ['local-folder'],
+      drivePath: source,
+    });
+  };
 
   // Process in batches
   for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
@@ -155,33 +201,34 @@ export async function processFilesBatched(options: BatchedProcessingOptions): Pr
             batchDocuments.push(doc);
             console.log(`[BatchedProcessor] Backend processed ${processed.total_chunks} chunks`);
           } catch (backendError) {
-            console.error(`[BatchedProcessor] Backend failed for ${file.name}:`, backendError);
-            totalSkipped++;
-            continue;
+            console.warn(`[BatchedProcessor] Backend failed for ${file.name}; attempting client fallback`, backendError);
+            try {
+              const fallbackDoc = await processClientSideFile(file);
+              if (fallbackDoc) {
+                batchDocuments.push(fallbackDoc);
+                console.log(`[BatchedProcessor] Fallback succeeded for ${file.name}`);
+              } else {
+                console.warn(`[BatchedProcessor] Fallback produced no content for ${file.name}`);
+                batchSkipped++;
+                totalSkipped++;
+                continue;
+              }
+            } catch (fallbackError) {
+              console.error(`[BatchedProcessor] Fallback failed for ${file.name}:`, fallbackError);
+              batchFailed++;
+              totalFailed++;
+              continue;
+            }
           }
         } else {
           console.log(`[BatchedProcessor] [${fileIndex + 1}/${files.length}] Client-side: ${file.name}`);
-          const text = file.name.toLowerCase().endsWith('.pdf')
-            ? (await extractPdfTextWithOffloading(file, { maxPages: 10 })).text
-            : await file.text();
-          if (!text || text.trim().length === 0) {
+          const doc = await processClientSideFile(file);
+          if (!doc) {
             console.log(`[BatchedProcessor] Empty content, skipping: ${file.name}`);
+            batchSkipped++;
             totalSkipped++;
             continue;
           }
-
-          const truncatedContent = text.length > maxStoredContentLength
-            ? `${text.substring(0, maxStoredContentLength)}\n\n[Truncated: ${text.length} total chars]`
-            : text;
-          const doc = KnowledgeBaseService.createIngestedDocument({
-            title: file.name,
-            content: truncatedContent,
-            chunkSourceContent: text,
-            source: `Local: ${source}`,
-            tags: tags.length ? tags : ['local-folder'],
-            drivePath: source,
-          });
-
           batchDocuments.push(doc);
         }
         
@@ -211,7 +258,7 @@ export async function processFilesBatched(options: BatchedProcessingOptions): Pr
     }
 
     // Report batch completion
-    onBatchComplete({
+    await onBatchComplete({
       batchNumber: batchNum + 1,
       success: batchSuccess,
       failed: batchFailed,
@@ -244,7 +291,7 @@ export async function processFilesBatched(options: BatchedProcessingOptions): Pr
   }
 
   // Final completion
-  onComplete({
+  await onComplete({
     totalSuccess,
     totalFailed,
     totalSkipped,

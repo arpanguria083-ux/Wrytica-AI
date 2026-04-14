@@ -24,7 +24,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 # Import resource and job management
-from resource_manager import resource_monitor, ResourceMonitor, HardwareProfile, RESOURCE_LIMITS
+from resource_manager import (
+    resource_monitor,
+    ResourceMonitor,
+    HardwareProfile,
+    RESOURCE_LIMITS,
+)
 from job_queue import job_queue, init_job_queue, JobStatus
 
 logging.basicConfig(level=logging.INFO)
@@ -134,7 +139,11 @@ def detect_compute_mode() -> Dict[str, Any]:
             total_memory_gb = int(result.stdout.strip()) / (1024**3)
             info["use_gpu"] = total_memory_gb >= 16.0
             info["accelerator"] = "mps" if info["use_gpu"] else "cpu"
-            info["reason"] = "mps_available_unified_memory" if info["use_gpu"] else "insufficient_unified_memory"
+            info["reason"] = (
+                "mps_available_unified_memory"
+                if info["use_gpu"]
+                else "insufficient_unified_memory"
+            )
         except Exception:
             info["reason"] = "mps_detection_failed"
         return info
@@ -172,12 +181,19 @@ def is_mineru_available() -> Dict[str, Any]:
     if mineru_version:
         try:
             from mineru.backend.pipeline.pipeline_analyze import doc_analyze_streaming  # noqa: F401
-            from mineru.backend.pipeline.pipeline_middle_json_mkcontent import union_make  # noqa: F401
+            from mineru.backend.pipeline.pipeline_middle_json_mkcontent import (
+                union_make,
+            )  # noqa: F401
+
             pipeline_ok = True
             logger.info("MinerU %s pipeline ready", mineru_version)
         except Exception as e:
             # Log once at startup, then cache so it never repeats
-            logger.warning("MinerU %s found but pipeline unavailable (dependency conflict): %s", mineru_version, str(e).split('\n')[0])
+            logger.warning(
+                "MinerU %s found but pipeline unavailable (dependency conflict): %s",
+                mineru_version,
+                str(e).split("\n")[0],
+            )
             logger.info("Advanced OCR will use Chandra (pypdfium2) as fallback")
 
     _mineru_availability_cache = {
@@ -189,7 +205,16 @@ def is_mineru_available() -> Dict[str, Any]:
 
 
 def _parse_content_list_metrics(items: List[Dict[str, Any]]) -> Dict[str, int]:
-    text_like_types = {"text", "list", "code", "header", "footer", "page_number", "aside_text", "page_footnote"}
+    text_like_types = {
+        "text",
+        "list",
+        "code",
+        "header",
+        "footer",
+        "page_number",
+        "aside_text",
+        "page_footnote",
+    }
     max_page = max((int(item.get("page_idx", -1)) for item in items), default=-1)
     return {
         "total_pages": max_page + 1 if max_page >= 0 else 0,
@@ -225,8 +250,16 @@ def _fallback_markdown_from_content_list(items: List[Dict[str, Any]]) -> str:
 
 
 def _load_mineru_output(output_dir: Path) -> Tuple[str, Dict[str, int]]:
-    markdown_files = sorted(output_dir.rglob("*.md"), key=lambda p: p.stat().st_size if p.exists() else 0, reverse=True)
-    markdown = markdown_files[0].read_text(encoding="utf-8", errors="ignore") if markdown_files else ""
+    markdown_files = sorted(
+        output_dir.rglob("*.md"),
+        key=lambda p: p.stat().st_size if p.exists() else 0,
+        reverse=True,
+    )
+    markdown = (
+        markdown_files[0].read_text(encoding="utf-8", errors="ignore")
+        if markdown_files
+        else ""
+    )
 
     content_list_files = list(output_dir.rglob("*_content_list.json"))
     if content_list_files:
@@ -246,7 +279,9 @@ def _load_mineru_output(output_dir: Path) -> Tuple[str, Dict[str, int]]:
     }
 
 
-def _run_mineru_pipeline(file_path: Path, compute: Dict[str, Any]) -> Tuple[str, Dict[str, int], str]:
+def _run_mineru_pipeline(
+    file_path: Path, compute: Dict[str, Any]
+) -> Tuple[str, Dict[str, int], str]:
     """Use MinerU Python API directly (bypasses CLI and office dependencies)."""
     from mineru.backend.pipeline.pipeline_analyze import doc_analyze_streaming
     from mineru.backend.pipeline.pipeline_middle_json_mkcontent import union_make
@@ -292,7 +327,9 @@ def _run_mineru_pipeline(file_path: Path, compute: Dict[str, Any]) -> Tuple[str,
         shutil.rmtree(output_dir, ignore_errors=True)
 
 
-async def _extract_with_mineru(file_path: Path, compute: Dict[str, Any]) -> Tuple[str, Dict[str, int], str]:
+async def _extract_with_mineru(
+    file_path: Path, compute: Dict[str, Any]
+) -> Tuple[str, Dict[str, int], str]:
     return await asyncio.to_thread(_run_mineru_pipeline, file_path, compute)
 
 
@@ -348,7 +385,9 @@ def _extract_with_pdf_fallback_sync(file_path: Path) -> Tuple[str, Dict[str, int
     )
 
 
-async def _extract_with_pdf_fallback(file_path: Path) -> Tuple[str, Dict[str, int], str]:
+async def _extract_with_pdf_fallback(
+    file_path: Path,
+) -> Tuple[str, Dict[str, int], str]:
     return await asyncio.to_thread(_extract_with_pdf_fallback_sync, file_path)
 
 
@@ -360,7 +399,9 @@ def _extract_with_chandra_sync(file_path: Path) -> Tuple[str, Dict[str, int], st
     try:
         import pypdfium2 as pdfium
     except ImportError:
-        logger.warning("pypdfium2 not available for Chandra, falling back to pdfplumber")
+        logger.warning(
+            "pypdfium2 not available for Chandra, falling back to pdfplumber"
+        )
         return _extract_with_pdf_fallback_sync(file_path)
 
     try:
@@ -383,14 +424,16 @@ def _extract_with_chandra_sync(file_path: Path) -> Tuple[str, Dict[str, int], st
 
             # Count images on the page
             try:
-                img_count = sum(1 for _ in page.get_objects(filter=[pdfium.raw.FPDF_PAGEOBJ_IMAGE]))
+                img_count = sum(
+                    1 for _ in page.get_objects(filter=[pdfium.raw.FPDF_PAGEOBJ_IMAGE])
+                )
             except Exception:
                 img_count = 0
             images_found += img_count
 
             # Detect likely tables by counting lines with tab/column separators
-            lines = page_text.split('\n')
-            tab_lines = sum(1 for ln in lines if '\t' in ln or '  ' in ln.strip())
+            lines = page_text.split("\n")
+            tab_lines = sum(1 for ln in lines if "\t" in ln or "  " in ln.strip())
             if tab_lines > 3:
                 tables += 1
                 # Format as code block to preserve alignment
@@ -404,7 +447,8 @@ def _extract_with_chandra_sync(file_path: Path) -> Tuple[str, Dict[str, int], st
 
                 # Collapse multiple blank lines to single
                 import re
-                cleaned = re.sub(r'\n{3,}', '\n\n', '\n'.join(cleaned_lines)).strip()
+
+                cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned_lines)).strip()
 
                 if cleaned:
                     formatted = f"## {page_label}\n\n{cleaned}"
@@ -453,7 +497,12 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 200) -> List[str
         end = min(start + chunk_size, len(text))
         if end < len(text):
             for idx in range(end - 1, max(start, end - 100), -1):
-                if idx < len(text) and text[idx] in ".!?" and idx + 1 < len(text) and text[idx + 1] in " \n":
+                if (
+                    idx < len(text)
+                    and text[idx] in ".!?"
+                    and idx + 1 < len(text)
+                    and text[idx + 1] in " \n"
+                ):
                     end = idx + 1
                     break
             else:
@@ -492,7 +541,9 @@ def _build_deep_extract_chunks(markdown: str) -> List[Dict[str, Any]]:
     return chunks
 
 
-async def deep_extract_pdf_file(file_path: Path, filename: str, file_size_bytes: int) -> DeepExtractResult:
+async def deep_extract_pdf_file(
+    file_path: Path, filename: str, file_size_bytes: int
+) -> DeepExtractResult:
     start_time = time.time()
     mineru_info = is_mineru_available()
     compute = detect_compute_mode()
@@ -539,7 +590,9 @@ async def startup_event():
     max_concurrent = resource_monitor.limits["max_concurrent_jobs"]
     job_queue = init_job_queue(max_concurrent, resource_monitor)
 
-    logger.info(f"Resource monitor initialized: profile={profile}, max_concurrent={max_concurrent}")
+    logger.info(
+        f"Resource monitor initialized: profile={profile}, max_concurrent={max_concurrent}"
+    )
 
     # Cache MinerU availability once at startup (prevents repeated warnings on every health poll)
     is_mineru_available()
@@ -557,16 +610,20 @@ async def health_check():
     chandra_available = False
     try:
         import pypdfium2  # noqa: F401
+
         chandra_available = True
     except ImportError:
         pass
     pdfplumber_available = False
     try:
         import pdfplumber  # noqa: F401
+
         pdfplumber_available = True
     except ImportError:
         pass
-    ocr_available = chandra_available or pdfplumber_available or bool(mineru_info["available"])
+    ocr_available = (
+        chandra_available or pdfplumber_available or bool(mineru_info["available"])
+    )
     return HealthStatus(
         status="healthy",
         version=APP_VERSION,
@@ -578,7 +635,10 @@ async def health_check():
             "ocr_fast": pdfplumber_available,
             "ocr_balanced": chandra_available,
             "deep_extract": bool(mineru_info["available"]),
-            "deep_extract_gpu": bool(mineru_info["available"] and compute.get("accelerator") in {"gpu", "mps"}),
+            "deep_extract_gpu": bool(
+                mineru_info["available"]
+                and compute.get("accelerator") in {"gpu", "mps"}
+            ),
             "deep_extract_cpu": bool(mineru_info["available"]),
             "mineru_version": mineru_info.get("version"),
             "deep_extract_compute_reason": compute.get("reason"),
@@ -589,6 +649,7 @@ async def health_check():
 # ==============================================================================
 # Job Queue & Resource Monitoring Endpoints
 # ==============================================================================
+
 
 @app.get("/api/system/metrics")
 async def get_system_metrics():
@@ -610,15 +671,25 @@ async def get_system_stats():
 
 
 @app.post("/api/jobs/ocr")
-async def start_ocr_job(file: UploadFile = File(...), engine: str = Query("auto"), timeout_sec: int = Query(1800)):
+async def start_ocr_job(
+    file: UploadFile = File(...),
+    engine: str = Query("auto"),
+    timeout_sec: int = Query(1800),
+):
     """Start OCR job asynchronously with resource checking."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
     # Check file type
     filename_lower = file.filename.lower()
-    if not any(filename_lower.endswith(ext) for ext in ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif']):
-        raise HTTPException(status_code=400, detail="Unsupported file type. Supported: PDF, PNG, JPG, TIFF")
+    if not any(
+        filename_lower.endswith(ext)
+        for ext in [".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif"]
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Supported: PDF, PNG, JPG, TIFF",
+        )
 
     # Read file
     content = await file.read()
@@ -649,7 +720,7 @@ async def start_ocr_job(file: UploadFile = File(...), engine: str = Query("auto"
             task_type,
             {"file_path": str(temp_path), "engine": engine},
             timeout_sec=timeout_sec,
-            file_size_mb=file_size_mb
+            file_size_mb=file_size_mb,
         )
     except Exception as e:
         logger.error(f"Failed to queue job: {e}")
@@ -711,12 +782,25 @@ async def cancel_job(job_id: str):
 # Background Job Handler
 # ==============================================================================
 
-async def ocr_job_handler(job_id: str, task_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+
+async def ocr_job_handler(
+    job_id: str, task_type: str, payload: Dict[str, Any]
+) -> Dict[str, Any]:
     """Handle OCR job execution."""
     file_path = Path(payload["file_path"])
-    engine = payload.get("engine", "auto")
+    requested_engine = payload.get("engine", "auto")
+    engine = requested_engine
+    selected_engine = requested_engine
+    actual_engine = requested_engine
+    fallback_reason: Optional[str] = None
 
-    logger.info(f"Processing job {job_id} with engine {engine}, file: {file_path.name}")
+    logger.info(
+        "Processing OCR job %s: requested=%s task_type=%s file=%s",
+        job_id,
+        requested_engine,
+        task_type,
+        file_path.name,
+    )
 
     start_time = time.time()
 
@@ -735,6 +819,8 @@ async def ocr_job_handler(job_id: str, task_type: str, payload: Dict[str, Any]) 
             else:
                 engine = "pdfplumber"
 
+        selected_engine = engine
+
         # Execute OCR based on engine
         markdown = ""
         layout_elements = {
@@ -751,34 +837,51 @@ async def ocr_job_handler(job_id: str, task_type: str, payload: Dict[str, Any]) 
             if mineru_info["pipeline_ok"]:
                 try:
                     await job_queue.set_progress(job_id, 20)
-                    markdown, layout, mode = await _extract_with_mineru(file_path, detect_compute_mode())
+                    markdown, layout, mode = await _extract_with_mineru(
+                        file_path, detect_compute_mode()
+                    )
                     layout_elements = layout
+                    actual_engine = "mineru"
                 except Exception as e:
-                    logger.warning(f"MinerU pipeline failed for {job_id}, falling back to Chandra: {e}")
+                    logger.warning(
+                        f"MinerU pipeline failed for {job_id}, falling back to Chandra: {e}"
+                    )
                     markdown, layout, mode = await _extract_with_chandra(file_path)
                     layout_elements = layout
+                    actual_engine = "chandra"
+                    fallback_reason = "mineru_failed"
             else:
-                logger.info(f"MinerU not ready (dependency issue), using Chandra for job {job_id}")
+                logger.info(
+                    f"MinerU not ready (dependency issue), using Chandra for job {job_id}"
+                )
                 await job_queue.set_progress(job_id, 20)
                 markdown, layout, mode = await _extract_with_chandra(file_path)
                 layout_elements = layout
                 mode = "chandra_pypdfium2 (mineru_unavailable)"
+                actual_engine = "chandra"
+                fallback_reason = "mineru_unavailable"
 
         elif engine == "chandra":
             try:
                 await job_queue.set_progress(job_id, 20)
                 markdown, layout, mode = await _extract_with_chandra(file_path)
                 layout_elements = layout
+                actual_engine = "chandra"
             except Exception as e:
-                logger.warning(f"Chandra failed for {job_id}, falling back to pdfplumber: {e}")
+                logger.warning(
+                    f"Chandra failed for {job_id}, falling back to pdfplumber: {e}"
+                )
                 markdown, layout, mode = await _extract_with_pdf_fallback(file_path)
                 layout_elements = layout
+                actual_engine = "pdfplumber"
+                fallback_reason = "chandra_failed"
 
         else:
             # pdfplumber (fast mode)
             await job_queue.set_progress(job_id, 20)
             markdown, layout, mode = await _extract_with_pdf_fallback(file_path)
             layout_elements = layout
+            actual_engine = "pdfplumber"
 
         await job_queue.set_progress(job_id, 90)
 
@@ -789,7 +892,16 @@ async def ocr_job_handler(job_id: str, task_type: str, payload: Dict[str, Any]) 
 
         duration_sec = time.time() - start_time
 
-        logger.info(f"Job {job_id} completed in {duration_sec:.1f}s using {engine}")
+        logger.info(
+            "OCR job %s completed in %.1fs requested=%s selected=%s actual=%s mode=%s fallback=%s",
+            job_id,
+            duration_sec,
+            requested_engine,
+            selected_engine,
+            actual_engine,
+            mode,
+            fallback_reason or "none",
+        )
 
         return {
             "document_id": str(uuid.uuid4()),
@@ -799,7 +911,10 @@ async def ocr_job_handler(job_id: str, task_type: str, payload: Dict[str, Any]) 
             "layout_elements": layout_elements,
             "processing_mode": mode,
             "processing_time_ms": duration_sec * 1000,
-            "engine": engine,
+            "engine": actual_engine,
+            "requested_engine": requested_engine,
+            "selected_engine": selected_engine,
+            "fallback_reason": fallback_reason,
         }
 
     except Exception as e:
@@ -829,7 +944,9 @@ async def deep_extract_pdf(file: UploadFile = File(...)):
         return await deep_extract_pdf_file(temp_file, file.filename, len(content))
     except Exception as exc:
         logger.error("Deep extract failed for %s: %s", file.filename, exc)
-        raise HTTPException(status_code=500, detail=f"Deep extract failed: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"Deep extract failed: {exc}"
+        ) from exc
     finally:
         temp_file.unlink(missing_ok=True)
 
@@ -841,7 +958,12 @@ async def process_document(
     extraction_mode: Literal["standard", "deep"] = Query("standard"),
 ):
     start_time = time.time()
-    logger.info("Processing file: %s (%s bytes), extraction_mode=%s", file.filename, file.size, extraction_mode)
+    logger.info(
+        "Processing file: %s (%s bytes), extraction_mode=%s",
+        file.filename,
+        file.size,
+        extraction_mode,
+    )
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
@@ -867,7 +989,9 @@ async def process_document(
 
         embeddings = None
         if include_embeddings and embedding_model and chunks:
-            embeddings = embedding_model.encode([chunk["text"] for chunk in chunks]).tolist()
+            embeddings = embedding_model.encode(
+                [chunk["text"] for chunk in chunks]
+            ).tolist()
 
         return ProcessedDocument(
             document_id=str(uuid.uuid4()),
@@ -886,12 +1010,18 @@ async def process_document(
         temp_file.unlink(missing_ok=True)
 
 
-async def process_pdf(file_path: Path, extraction_mode: Literal["standard", "deep"]) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+async def process_pdf(
+    file_path: Path, extraction_mode: Literal["standard", "deep"]
+) -> Tuple[List[Dict[str, Any]], Optional[int]]:
     if extraction_mode == "deep":
-        deep_result = await deep_extract_pdf_file(file_path, file_path.name, file_path.stat().st_size)
+        deep_result = await deep_extract_pdf_file(
+            file_path, file_path.name, file_path.stat().st_size
+        )
         return _build_deep_extract_chunks(deep_result.markdown), deep_result.total_pages
 
-    parts, total_pages, _ = await asyncio.to_thread(_extract_pdf_pages_as_markdown, file_path)
+    parts, total_pages, _ = await asyncio.to_thread(
+        _extract_pdf_pages_as_markdown, file_path
+    )
     chunks: List[Dict[str, Any]] = []
     for page_number, part in enumerate(parts, 1):
         for idx, piece in enumerate(chunk_text(part, chunk_size=800, overlap=200)):
@@ -994,7 +1124,10 @@ async def generate_embeddings(texts: List[str]):
         raise HTTPException(status_code=503, detail="Embedding model not loaded yet")
     try:
         embeddings = embedding_model.encode(texts).tolist()
-        return {"embeddings": embeddings, "dimensions": len(embeddings[0]) if embeddings else 0}
+        return {
+            "embeddings": embeddings,
+            "dimensions": len(embeddings[0]) if embeddings else 0,
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Embedding error: {exc}") from exc
 

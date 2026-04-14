@@ -396,7 +396,7 @@ export interface KnowledgeDocument {
   chunks: KnowledgeChunk[];
   drivePath?: string;
   pageIndex?: PageIndexNode[];
-  pageImages?: string[]; // base64 data URLs for vision RAG (small set)
+  pageImageRefs?: string[]; // References to image asset IDs stored separately
   previewUrl?: string; // Temporary Blob URL for visual PDF/Image viewer
   type?: 'pdf' | 'image' | 'text' | 'docx' | 'other';
 }

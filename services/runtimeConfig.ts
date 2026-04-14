@@ -1,6 +1,7 @@
 export type WryticaRuntimeConfig = {
   backendUrl?: string;
   desktop?: boolean;
+  version?: string;
 };
 
 declare global {

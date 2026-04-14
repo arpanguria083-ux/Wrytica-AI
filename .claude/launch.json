@@ -19,5 +19,11 @@
       "runtimeArgs": ["run", "preview"],
       "port": 4173
     }
+    ,{
+      "name": "Landing Page",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "docs/landing", "--listen", "5200", "--no-clipboard"],
+      "port": 5200
+    }
   ]
 }

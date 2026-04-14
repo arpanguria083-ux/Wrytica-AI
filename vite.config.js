@@ -2,10 +2,70 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import electron from 'vite-plugin-electron';
+import renderer from 'vite-plugin-electron-renderer';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  plugins: [
+    react(),
+    electron([
+      {
+        entry: 'electron/main.ts',
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            rollupOptions: {
+              external: ['electron']
+            }
+          }
+        }
+      },
+      {
+        entry: 'electron/preload.ts',
+        onstart(options) {
+          options.reload();
+        },
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            lib: {
+              entry: path.resolve(rootDir, 'electron/preload.ts'),
+              formats: ['cjs'],
+              fileName: () => 'preload.cjs'
+            },
+            rollupOptions: {
+              external: ['electron']
+            }
+          }
+        }
+      }
+    ]),
+    renderer()
+  ],
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 1100,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          pdfjs: ['pdfjs-dist/build/pdf.mjs'],
+          tesseract: ['tesseract.js'],
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-gemini': ['@google/genai'],
+          'vendor-tiptap': [
+            '@tiptap/react',
+            '@tiptap/starter-kit',
+            '@tiptap/extension-link',
+            '@tiptap/extension-underline',
+            '@tiptap/extension-placeholder',
+          ],
+        },
+      },
+    },
+  },
   server: {
     port: 5180,
     host: '0.0.0.0',
@@ -61,10 +121,8 @@ export default defineConfig({
   },
   esbuild: {
     logLevel: 'warning',
-    // Target modern browsers in dev — skips unnecessary downleveling transforms.
     target: 'esnext',
   },
-  plugins: [react()],
   // Pre-bundle ALL heavy dependencies at server startup so the browser never
   // triggers an on-demand re-bundle (which reloads the page mid-load).
   optimizeDeps: {
@@ -104,31 +162,6 @@ export default defineConfig({
     preserveSymlinks: true,
     alias: {
       '@': rootDir,
-    },
-  },
-  build: {
-    chunkSizeWarningLimit: 1100,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          // PDF (lazy — only loaded when a PDF is opened)
-          pdfjs: ['pdfjs-dist/build/pdf.mjs'],
-          // Tesseract OCR (lazy — large WASM binary)
-          tesseract: ['tesseract.js'],
-          // Core React + router
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          // Google Gemini SDK
-          'vendor-gemini': ['@google/genai'],
-          // TipTap rich-text editor (ProseMirror-based)
-          'vendor-tiptap': [
-            '@tiptap/react',
-            '@tiptap/starter-kit',
-            '@tiptap/extension-link',
-            '@tiptap/extension-underline',
-            '@tiptap/extension-placeholder',
-          ],
-        },
-      },
     },
   },
 });

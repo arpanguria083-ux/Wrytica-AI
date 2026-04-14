@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useRef, useCallback, useEffect, startTransition } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect, startTransition } from 'react';
 import { FixedSizeList as List } from 'react-window';
 import { 
   Inbox, FileText, Trash, Plus, Layers, FolderUp, HardDrive, 
@@ -18,6 +18,31 @@ import {
 } from '../utils';
 import { getPdfJs, cleanupCanvas, extractPdfTextWithOffloading } from '../services/ocrService';
 import { INGESTION_CONFIG_KEY, loadIngestionConfig, saveIngestionConfig } from '../utils/ingestionConfig';
+import { platformFileService, getDirectoryName, FileEntry, isElectronDir, isBrowserDir } from '../services/platformFileService';
+
+function getElectronAPI() {
+  return (window as any).electronAPI;
+}
+
+const KB_UI_DIAG_TAG = '[KnowledgeBase][UI-DIAG]';
+
+const decodeBase64Utf8 = (base64: string): string => {
+  const binary = atob(base64);
+  const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+};
+
+const joinFsPath = (...parts: string[]): string => {
+  if (parts.length === 0) return '';
+  const sep = parts[0].includes('\\') ? '\\' : '/';
+  return parts
+    .filter(Boolean)
+    .map((part, index) => {
+      if (index === 0) return part.replace(/[\\/]+$/g, '');
+      return part.replace(/^[\\/]+|[\\/]+$/g, '');
+    })
+    .join(sep);
+};
 
 // Virtual list: use when doc count exceeds this (only visible rows rendered)
 const VIRTUAL_LIST_THRESHOLD = 50;
@@ -80,6 +105,7 @@ export const KnowledgeBase: React.FC = () => {
     disconnectWorkspace,
     storageMode,
     setBulkIngestionInProgress,
+    isStorageLoading,
     workspaceSyncError
   } = useAppContext();
 
@@ -111,6 +137,7 @@ export const KnowledgeBase: React.FC = () => {
   const [pageIndexDrivePath, setPageIndexDrivePath] = useState('');
   const [pageIndexError, setPageIndexError] = useState('');
   const [pageImages, setPageImages] = useState<string[]>([]);
+  const indexLocalFolderButtonRef = useRef<HTMLButtonElement>(null);
   
   // Batch tree creation state
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
@@ -135,6 +162,78 @@ export const KnowledgeBase: React.FC = () => {
     }
   }, [knowledgeBase.length, visibleDocCount]);
 
+  useEffect(() => {
+    const logIndexButtonDiagnostics = (phase: string) => {
+      const runtime = (window as any).__WRYTICA_RUNTIME__;
+      const button = indexLocalFolderButtonRef.current;
+
+      if (!button) {
+        console.warn(`${KB_UI_DIAG_TAG} index button missing`, {
+          phase,
+          route: window.location.hash,
+          runtime,
+          viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio },
+        });
+        return;
+      }
+
+      const rect = button.getBoundingClientRect();
+      const parentRect = button.parentElement?.getBoundingClientRect();
+      const style = window.getComputedStyle(button);
+      const inViewport = rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+      const visibleStyle = style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || '1') > 0;
+      const clippedByParent = parentRect
+        ? rect.left < parentRect.left || rect.top < parentRect.top || rect.right > parentRect.right || rect.bottom > parentRect.bottom
+        : false;
+
+      console.info(`${KB_UI_DIAG_TAG} index button state`, {
+        phase,
+        text: button.textContent?.trim(),
+        route: window.location.hash,
+        runtime,
+        backendAvailable,
+        isStorageLoading,
+        isIndexing,
+        existsInDom: document.querySelectorAll('[data-testid="kb-index-local-folder-btn"]').length,
+        inViewport,
+        visibleStyle,
+        clippedByParent,
+        rect: {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        },
+        parentRect: parentRect
+          ? {
+              x: Math.round(parentRect.x),
+              y: Math.round(parentRect.y),
+              width: Math.round(parentRect.width),
+              height: Math.round(parentRect.height),
+            }
+          : null,
+        style: {
+          display: style.display,
+          visibility: style.visibility,
+          opacity: style.opacity,
+          position: style.position,
+          zIndex: style.zIndex,
+        },
+        viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio },
+      });
+    };
+
+    logIndexButtonDiagnostics('render');
+    const t = window.setTimeout(() => logIndexButtonDiagnostics('post-render'), 250);
+    const onResize = () => logIndexButtonDiagnostics('resize');
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [backendAvailable, isStorageLoading, isIndexing]);
+
   const handleAddDocument = async () => {
     if (!title.trim() || (!content.trim() && pageImages.length === 0)) return;
 
@@ -146,9 +245,9 @@ export const KnowledgeBase: React.FC = () => {
         source: source.trim() || undefined,
         tags: parsedTags,
         drivePath: drivePath.trim() || undefined,
-        pageImages: pageImages.length ? pageImages : undefined
+        _pageImagesData: pageImages.length ? pageImages : undefined
       });
-      addKnowledgeDocument(doc);
+      await addKnowledgeDocument(doc, pageImages);
       setTitle('');
       setContent('');
       setSource('');
@@ -502,7 +601,7 @@ export const KnowledgeBase: React.FC = () => {
     }
   };
 
-  const handleAddPageIndexDoc = () => {
+  const handleAddPageIndexDoc = async () => {
     if (!pageIndexPreview) return;
     setLoading(true);
     try {
@@ -515,7 +614,7 @@ export const KnowledgeBase: React.FC = () => {
         drivePath: pageIndexDrivePath.trim() || undefined,
         pageIndex: pageIndexPreview.nodes
       });
-      addKnowledgeDocument(doc);
+      await addKnowledgeDocument(doc);
       resetPageIndexImport();
     } finally {
       setLoading(false);
@@ -577,21 +676,25 @@ export const KnowledgeBase: React.FC = () => {
   const isAbortedRef = useRef(false);
   const isProcessingLockRef = useRef(false); // CRITICAL: Prevents double-clicks
 
-  // Index local folder using File System Access API
+  // Index local folder using platform-abstracted file service
   const handleIndexLocalFolder = useCallback(async () => {
+    setStatus('Opening folder picker...');
+    console.info('[IndexLocalFolder] Clicked', {
+      hasElectronAPI: Boolean((window as any).electronAPI),
+      runtime: (window as any).__WRYTICA_RUNTIME__,
+      userAgent: navigator.userAgent,
+    });
+
     // CRITICAL: Check for double-clicks or concurrent processing
     if (isProcessingLockRef.current) {
       console.log('[IndexLocalFolder] BLOCKED: Already processing');
-      return;
-    }
-    
-    if (!('showDirectoryPicker' in window)) {
-      setStatus('Your browser does not support folder picking. Use the CLI script instead.');
+      setStatus('Indexing is already running. Please wait.');
       return;
     }
 
     if (isIndexing) {
       console.log('[IndexLocalFolder] BLOCKED: isIndexing is true');
+      setStatus('Indexing is already in progress.');
       return;
     }
     
@@ -603,7 +706,14 @@ export const KnowledgeBase: React.FC = () => {
     isCancelledRef.current = false;
 
     try {
-      const dirHandle = await (window as any).showDirectoryPicker();
+      const dir = await platformFileService.pickDirectory();
+      if (!dir) {
+        setStatus('No folder selected, picker canceled, or Electron file API unavailable.');
+        console.warn('[IndexLocalFolder] No directory returned from picker');
+        return;
+      }
+
+      const dirName = getDirectoryName(dir);
 
       setIsIndexing(true);
       const startTime = Date.now();
@@ -617,14 +727,26 @@ export const KnowledgeBase: React.FC = () => {
         startTime
       });
 
-      const files = await getAllFilesRecursively(dirHandle, '', (count, dir) => {
-        setIndexProgress(prev => prev ? { 
-          ...prev, 
-          currentFile: `Scanning: ${dir} (${count} files found...)`,
-          startTime // Preserve startTime
-        } : null);
+      const entries = await platformFileService.walkDirectory(dir);
+      const total = entries.length;
+      console.info('[IndexLocalFolder] Directory scan complete', {
+        dirName,
+        total,
       });
-      const total = files.length;
+
+      if (total === 0) {
+        setStatus(`No supported files found in "${dirName}". Check folder contents and extension filters.`);
+        setIndexProgress({
+          total: 0,
+          processed: 0,
+          success: 0,
+          skipped: 0,
+          errors: ['No supported files found'],
+          currentFile: 'No files to process',
+          startTime,
+        });
+        return;
+      }
 
       // CRITICAL: Disable vector rebuilds during bulk ingestion to prevent crashes
       setBulkIngestionInProgress(true);
@@ -637,23 +759,22 @@ export const KnowledgeBase: React.FC = () => {
       let skipCount = 0;
       const errors: string[] = [];
 
-      const textFiles: { handle: FileSystemFileHandle; file: File }[] = [];
+      const textFiles: { entry: FileEntry; file: File }[] = [];
       let fileLoopCount = 0;
-      for (const fileHandle of files) {
+      for (const entry of entries) {
         if (isCancelledRef.current) break;
         try {
-          const file = await fileHandle.getFile();
-          const fileName = fileHandle.name.toLowerCase();
-          if (file.size > MAX_FILE_SIZE) {
+          if (entry.size > MAX_FILE_SIZE) {
             skipCount++;
             continue;
           }
-          if (/\.(jpg|jpeg|png|webp)$/.test(fileName)) {
+          if (/\.(jpg|jpeg|png|webp)$/.test(entry.name.toLowerCase())) {
             skipCount++;
             continue;
           }
-          textFiles.push({ handle: fileHandle, file });
-          processedBytesRef.current += file.size;
+          const file = await platformFileService.readFile(entry);
+          textFiles.push({ entry, file });
+          processedBytesRef.current += entry.size;
         } catch (err) {
           skipCount++;
         }
@@ -728,9 +849,9 @@ export const KnowledgeBase: React.FC = () => {
             title: fileName,
             content: storedContent,
             chunkSourceContent: text,
-            source: `Local: ${dirHandle.name}`,
+            source: `Local: ${dirName}`,
             tags: parsedTags.length ? parsedTags : ['local-folder'],
-            drivePath: dirHandle.name,
+            drivePath: dirName,
           });
 
           return doc;
@@ -752,7 +873,7 @@ export const KnowledgeBase: React.FC = () => {
       
       await processFilesBatched({
         files: filesToProcess,
-        source: dirHandle.name,
+        source: dirName,
         tags: parsedTags,
         backendAvailable,
         pdfExtractionMode: ingestionConfig.pdfExtractionMode,
@@ -780,7 +901,7 @@ export const KnowledgeBase: React.FC = () => {
             console.log(`[IndexLocalFolder] Saved batch ${batchNumber} (${documents.length} docs)`);
           }
         },
-        onComplete: async ({ totalSuccess, totalFailed, totalSkipped }) => {
+        onComplete: async ({ totalSuccess, totalFailed, totalSkipped, totalDuplicates }) => {
           const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
           const finalChunkEstimate = Math.ceil(totalBytes / 600);
           
@@ -789,8 +910,10 @@ export const KnowledgeBase: React.FC = () => {
               total,
               processed: total,
               success: totalSuccess,
-              skipped: totalFailed + totalSkipped,
-              errors: [],
+              skipped: totalFailed + totalSkipped + totalDuplicates,
+              errors: totalFailed > 0
+                ? [`${totalFailed} file(s) failed processing. Check console for details.`]
+                : [],
               currentFile: 'Complete',
               startTime
             });
@@ -799,14 +922,15 @@ export const KnowledgeBase: React.FC = () => {
           setTimeout(() => {
             setEstimatedChunks(null);
             
-            if (totalFailed + totalSkipped > 0) {
-              setStatus(`✅ Indexed ${totalSuccess} files (~${finalChunkEstimate} chunks) in ${totalTime}s. ${totalFailed + totalSkipped} files skipped.`);
+            const skippedCount = totalFailed + totalSkipped + totalDuplicates;
+            if (skippedCount > 0) {
+              setStatus(`✅ Indexed ${totalSuccess} files (~${finalChunkEstimate} chunks) in ${totalTime}s. ${skippedCount} files skipped/failed (duplicates: ${totalDuplicates}, failures: ${totalFailed}).`);
             } else {
               setStatus(`✅ Indexed ${totalSuccess} files (~${finalChunkEstimate} chunks) from local folder in ${totalTime}s.`);
             }
           }, 50);
           
-          console.log(`[IndexLocalFolder] Complete: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped`);
+          console.log(`[IndexLocalFolder] Complete: ${totalSuccess} success, ${totalFailed} failed, ${totalSkipped} skipped, ${totalDuplicates} duplicates`);
         },
         onCancel: () => isCancelledRef.current
       });
@@ -868,28 +992,75 @@ export const KnowledgeBase: React.FC = () => {
   // Bridge PageIndex Folder mapping (catalog.json + trees/ folder) — batched to avoid UI freeze
   const BRIDGE_BATCH_SIZE = 15;
   const handleBridgePageIndexFolder = async () => {
-    if (!('showDirectoryPicker' in window)) {
-      setStatus('Your browser does not support folder picking. Use the CLI script instead.');
-      return;
-    }
-
-    setLoading(true);
-    setStatus('Selecting PageIndex folder...');
-
+    let catalogHandle;
+    let treesHandle;
+    let catalog;
+    let entries: any[] = [];
+    
     try {
-      const dirHandle = await (window as any).showDirectoryPicker();
-      let catalogHandle;
-      try {
-        catalogHandle = await dirHandle.getFileHandle('catalog.json');
-      } catch (e) {
-        throw new Error('catalog.json not found in the selected folder. Ensure you select the root PageIndex data directory.');
+      const dir = await platformFileService.pickDirectory();
+      if (!dir) {
+        setStatus('No folder selected or folder picking not supported.');
+        return;
       }
 
-      const catalogFile = await catalogHandle.getFile();
-      const catalogContent = await catalogFile.text();
-      const catalog = JSON.parse(catalogContent);
+      setLoading(true);
+      setStatus('Selecting PageIndex folder...');
 
-      let entries: any[] = [];
+      const dirName = getDirectoryName(dir);
+
+      // In Electron mode, we need to read files via IPC
+      const api = getElectronAPI();
+      
+      if (api && isElectronDir(dir)) {
+        // Electron mode
+        const catalogPath = joinFsPath(dir.path, 'catalog.json');
+        const catalogResult = await api.fs.readFile(catalogPath);
+        if (!catalogResult.success) {
+          throw new Error('catalog.json not found in the selected folder. Ensure you select the root PageIndex data directory.');
+        }
+        const catalogContent = decodeBase64Utf8(catalogResult.data || '');
+        catalog = JSON.parse(catalogContent);
+        
+        const treesPath = joinFsPath(dir.path, 'trees');
+        const treesDirResult = await api.fs.readDir(treesPath);
+        if (!treesDirResult.success) {
+          throw new Error('trees/ folder not found. The bridge requires a "trees" subdirectory containing the PageIndex JSON files.');
+        }
+        
+        // For simplicity in Electron mode, we'll just note that trees folder exists
+        // A full implementation would read all files in the trees directory
+        treesHandle = {} as any; // Placeholder
+       } else {
+         // Browser mode - use File System Access API
+         if (isBrowserDir(dir)) {
+           const dirHandle = dir.handle as FileSystemDirectoryHandle;
+           
+           let catalogHandleTemp;
+           try {
+             catalogHandleTemp = await dirHandle.getFileHandle('catalog.json');
+           } catch (e) {
+             throw new Error('catalog.json not found in the selected folder. Ensure you select the root PageIndex data directory.');
+           }
+           
+           const catalogFile = await catalogHandleTemp.getFile();
+           const catalogContent = await catalogFile.text();
+           catalog = JSON.parse(catalogContent);
+           
+           let treesHandleTemp;
+           try {
+             treesHandleTemp = await dirHandle.getDirectoryHandle('trees');
+           } catch (e) {
+             throw new Error('trees/ folder not found. The bridge requires a "trees" subdirectory containing the PageIndex JSON files.');
+           }
+           
+           catalogHandle = catalogHandleTemp;
+           treesHandle = treesHandleTemp;
+         } else {
+           throw new Error('Invalid directory type');
+         }
+       }
+
       if (Array.isArray(catalog)) {
         entries = catalog;
       } else if (catalog.entries && Array.isArray(catalog.entries)) {
@@ -898,14 +1069,7 @@ export const KnowledgeBase: React.FC = () => {
         entries = Object.values(catalog);
       }
 
-      setStatus(`Found ${entries.length} document entries. Checking trees folder...`);
-
-      let treesHandle;
-      try {
-        treesHandle = await dirHandle.getDirectoryHandle('trees');
-      } catch (e) {
-        throw new Error('trees/ folder not found. The bridge requires a "trees" subdirectory containing the PageIndex JSON files.');
-      }
+      setStatus(`Found ${entries.length} document entries. Processing...`);
 
       let successCount = 0;
       const batch: KnowledgeDocument[] = [];
@@ -916,10 +1080,23 @@ export const KnowledgeBase: React.FC = () => {
         if (!docId) continue;
 
         try {
-          const treeFileName = `${docId}_tree.json`;
-          const treeFileHandle = await treesHandle.getFileHandle(treeFileName);
-          const treeFile = await treeFileHandle.getFile();
-          const treeText = await treeFile.text();
+          let treeText: string;
+          
+          if (api && isElectronDir(dir)) {
+            // Electron mode - read tree file via IPC
+            const treeFilePath = joinFsPath(dir.path, 'trees', `${docId}_tree.json`);
+            const treeResult = await api.fs.readFile(treeFilePath);
+            if (!treeResult.success) {
+              throw new Error(`Tree file not found for document ${docId}`);
+            }
+            treeText = decodeBase64Utf8(treeResult.data || '');
+          } else {
+            // Browser mode - use File System Access API
+            const treeFileHandle = await treesHandle.getFileHandle(`${docId}_tree.json`);
+            const treeFile = await treeFileHandle.getFile();
+            treeText = await treeFile.text();
+          }
+          
           const treeData = JSON.parse(treeText);
 
           const nodes = normalizePageIndexNodes(treeData.nodes || treeData.tree || treeData.sections || (Array.isArray(treeData) ? treeData : [treeData]));
@@ -953,7 +1130,7 @@ export const KnowledgeBase: React.FC = () => {
           console.warn(`Skipping document ${docId}:`, e);
         }
       }
-
+      
       if (batch.length > 0) {
         await addKnowledgeDocumentsBatch(batch);
       }
@@ -1001,7 +1178,7 @@ export const KnowledgeBase: React.FC = () => {
           drivePath: docData.drivePath || docData.folderPath,
           pageIndex: normalizedPageIndex, // Preserve PageIndex structure!
         });
-        addKnowledgeDocument(doc);
+        await addKnowledgeDocument(doc);
         successCount++;
       }
 
@@ -1155,13 +1332,13 @@ export const KnowledgeBase: React.FC = () => {
       });
 
       try {
-        if (!doc.content && (!doc.pageImages || doc.pageImages.length === 0)) continue;
+        if (!doc.content && (!doc.pageImageRefs || doc.pageImageRefs.length === 0)) continue;
         
         // Create tree structure from content
         const treeNodes = createPageIndexTree(doc.title, doc.content || 'Image-based document');
 
         // Update document with PageIndex using context function
-        updateKnowledgeDocument({
+        await updateKnowledgeDocument({
           ...doc,
           pageIndex: treeNodes,
           updatedAt: Date.now()
@@ -1202,7 +1379,7 @@ export const KnowledgeBase: React.FC = () => {
             <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{doc.source || doc.drivePath || 'Uploaded document'}</p>
           </div>
         </div>
-        <button onClick={() => removeKnowledgeDocument(doc.id)} className="text-red-500 hover:text-red-700 text-sm flex items-center space-x-1 flex-shrink-0">
+        <button onClick={() => { void removeKnowledgeDocument(doc.id); }} className="text-red-500 hover:text-red-700 text-sm flex items-center space-x-1 flex-shrink-0">
           <Trash size={14} /><span>Remove</span>
         </button>
       </div>
@@ -1228,9 +1405,9 @@ export const KnowledgeBase: React.FC = () => {
           </div>
         </div>
       )}
-      {doc.pageImages && doc.pageImages.length > 0 && (
+      {doc.pageImageRefs && doc.pageImageRefs.length > 0 && (
         <div className="text-[11px] text-slate-500 dark:text-slate-400">
-          <span className="font-semibold text-slate-900 dark:text-white">Vision pages cached: {doc.pageImages.length}</span>
+          <span className="font-semibold text-slate-900 dark:text-white">Vision pages cached: {doc.pageImageRefs.length}</span>
         </div>
       )}
     </div>
@@ -1534,6 +1711,9 @@ export const KnowledgeBase: React.FC = () => {
           )}
           <div className="flex flex-wrap items-center gap-3">
             <button
+              ref={indexLocalFolderButtonRef}
+              data-testid="kb-index-local-folder-btn"
+              aria-label="Index Local Folder"
               onClick={handleIndexLocalFolder}
               disabled={isIndexing}
               className="flex items-center space-x-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors"
@@ -1718,7 +1898,21 @@ export const KnowledgeBase: React.FC = () => {
         )}
       </div>
 
-      {documentListElement}
+      <div className="bg-white dark:bg-dark-surface rounded-2xl shadow-sm border border-slate-200 dark:border-dark-border p-6 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-slate-900 dark:text-white">Document library</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Structured notes, OCR docs, and imported trees available for retrieval.</p>
+          </div>
+          {isStorageLoading && (
+            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <RefreshCw size={14} className="animate-spin" />
+              <span>Loading knowledge base…</span>
+            </div>
+          )}
+        </div>
+        {documentListElement}
+      </div>
     </div>
   );
 };

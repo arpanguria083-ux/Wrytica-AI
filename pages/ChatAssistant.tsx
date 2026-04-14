@@ -7,6 +7,7 @@ import { KnowledgeBaseService } from '../services/knowledgeBaseService';
 import { PageIndexService } from '../services/pageIndexService';
 import { VectorStoreService } from '../services/vectorStoreService';
 import { VisionService } from '../services/visionService';
+import { ImageAssetStore } from '../services/imageAssetStore';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -123,6 +124,8 @@ export const ChatAssistant: React.FC = () => {
   
   // Notification sound
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const [streamingContent, setStreamingMessage] = useState<string | null>(null);
+  const [streamingReferences, setStreamingReferences] = useState<KnowledgeChunk[]>([]);
 
   const playNotificationSound = () => {
     if (!soundEnabled) return;
@@ -155,6 +158,7 @@ export const ChatAssistant: React.FC = () => {
   const chatSessionRef = useRef<AISession | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const chatHistoryRef = useRef<HTMLDivElement>(null);
 
   // Initialize/Update Session when config or current session changes
   useEffect(() => {
@@ -197,6 +201,31 @@ export const ChatAssistant: React.FC = () => {
     scrollToBottom();
   }, [messages]);
 
+  useEffect(() => {
+    const logChatScrollDiagnostics = (phase: string) => {
+      const node = chatHistoryRef.current;
+      if (!node) return;
+      const style = window.getComputedStyle(node);
+      console.info('[ChatAssistant][ScrollDiag] history pane', {
+        phase,
+        overflowY: style.overflowY,
+        clientHeight: node.clientHeight,
+        scrollHeight: node.scrollHeight,
+        canScroll: node.scrollHeight > node.clientHeight,
+        messages: messages.length,
+      });
+    };
+
+    logChatScrollDiagnostics('render');
+    const t = window.setTimeout(() => logChatScrollDiagnostics('post-render'), 200);
+    const onResize = () => logChatScrollDiagnostics('resize');
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [messages.length, loading, streamingContent]);
+
   // Auto-scroll to current search result
   useEffect(() => {
     if (currentSearchIndex >= 0 && searchResults[currentSearchIndex] !== undefined) {
@@ -211,9 +240,6 @@ export const ChatAssistant: React.FC = () => {
       updateChatSessionMessages(currentSessionId, nextMessages);
     }
   };
-
-  const [streamingContent, setStreamingMessage] = useState<string | null>(null);
-  const [streamingReferences, setStreamingReferences] = useState<KnowledgeChunk[]>([]);
 
   const handleSend = async () => {
     if (!input.trim() || loading || isOverLimit) return;
@@ -332,11 +358,11 @@ export const ChatAssistant: React.FC = () => {
         } else {
           // Check knowledge base references for images
           const referencedDocIds = Array.from(new Set(combinedReferences.map(r => r.docId).filter(Boolean)));
-          referencedDocIds.forEach(id => {
-            const doc = knowledgeBase.find(d => d.id === id);
-            if (doc?.pageImages && doc.pageImages.length) {
-              imagesToSend.push(...doc.pageImages.slice(0, 2)); // Limit KB images to 2 per doc
-            }
+          const referencedAssets = await Promise.all(
+            referencedDocIds.map(id => ImageAssetStore.getAssetDataForDoc(id, 2))
+          );
+          referencedAssets.forEach(images => {
+            imagesToSend.push(...images);
           });
           imagesToSend = imagesToSend.slice(0, 4); // Total limit 4
         }
@@ -360,13 +386,10 @@ export const ChatAssistant: React.FC = () => {
       // Optional vision RAG for knowledge base referenced docs (only if no images were sent directly)
       if (visionRag && imagesToSend.length === 0 && !uploadedDoc?.images?.length) {
         const referencedDocIds = Array.from(new Set(combinedReferences.map(r => r.docId).filter(Boolean)));
-        const images: string[] = [];
-        referencedDocIds.forEach(id => {
-          const doc = knowledgeBase.find(d => d.id === id);
-          if (doc?.pageImages && doc.pageImages.length) {
-            images.push(...doc.pageImages.slice(0, 4));
-          }
-        });
+        const imageGroups = await Promise.all(
+          referencedDocIds.map(id => ImageAssetStore.getAssetDataForDoc(id, 4))
+        );
+        const images = imageGroups.flat().slice(0, 6);
         if (images.length) {
           try {
             const visionAnswer = await VisionService.answerWithImages(config, userMsg.content, images.slice(0, 6), language);
@@ -413,9 +436,9 @@ export const ChatAssistant: React.FC = () => {
       setLastHistoryEntryId(entryId);
       
       // Replicate to global memory (Knowledge Base)
-      if (currentSessionId) {
-        syncChatSessionToMemory(currentSessionId);
-      }
+        if (currentSessionId) {
+          await syncChatSessionToMemory(currentSessionId);
+        }
       
       // Clear uploaded document after sending - free base64 memory
       setUploadedDoc(null);
@@ -666,7 +689,7 @@ export const ChatAssistant: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full bg-slate-50 dark:bg-slate-900 overflow-hidden">
+    <div className="flex h-full min-h-0 bg-slate-50 dark:bg-slate-900 overflow-hidden">
       {/* Session Sidebar */}
       <div className="w-64 flex-shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-dark-surface flex flex-col">
         <div className="p-4 border-b border-slate-200 dark:border-slate-800">
@@ -711,7 +734,7 @@ export const ChatAssistant: React.FC = () => {
       </div>
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col h-full bg-slate-50 dark:bg-slate-900 min-w-0">
+      <div className="flex-1 min-h-0 flex flex-col h-full bg-slate-50 dark:bg-slate-900 min-w-0">
         <div className="flex items-center justify-between px-6 py-4 bg-white dark:bg-dark-surface border-b border-slate-200 dark:border-dark-border">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-primary-600 flex items-center justify-center text-white shadow-lg shadow-primary-500/20">
@@ -800,7 +823,7 @@ export const ChatAssistant: React.FC = () => {
         </div>
 
         {/* Chat History */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div ref={chatHistoryRef} className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6 space-y-6">
           {knowledgeSummary && (
             <div className="bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 text-xs text-slate-600 dark:text-slate-300">
               <span className="font-semibold text-slate-700 dark:text-slate-100">Knowledge Base Context:</span>

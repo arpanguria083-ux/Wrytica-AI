@@ -175,7 +175,7 @@ export const DocumentViewer: React.FC = () => {
         type: result.type === 'pdf' ? 'pdf' : (result.type === 'image' ? 'image' : 'text'),
       });
 
-      addKnowledgeDocument(newDoc);
+      await addKnowledgeDocument(newDoc);
       setActiveDocId(newDoc.id);
 
       logDocumentHistory(file.name, result.text || 'Loaded document preview', 'uploaded-file');
@@ -540,5 +540,4 @@ export const DocumentViewer: React.FC = () => {
     </div>
   );
 };
-
 

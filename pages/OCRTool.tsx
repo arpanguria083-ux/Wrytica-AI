@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Layers, CloudUpload, FilePlus, Loader2, Save, Clipboard,
   AlertTriangle, CheckCircle, XCircle, Pause, Play, X
@@ -19,6 +19,9 @@ type DisplayResult = OcrResult & {
   stage: 'pending' | 'queued' | 'processing' | 'done' | 'error' | 'saved' | 'cancelled';
   progress: number;
   error?: string;
+  requestedEngine?: 'pdfplumber' | 'chandra' | 'mineru' | 'auto';
+  actualEngine?: string;
+  fallbackReason?: string;
   renderMode?: 'text' | 'markdown';
   processingMode?: string;
   processingTimeMs?: number;
@@ -38,6 +41,77 @@ export const OCRTool: React.FC = () => {
   const [browserHealthWarning, setBrowserHealthWarning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const jobIdsRef = useRef<Map<string, string>>(new Map());  // Map filename -> jobId
+
+  const backendFeatures = backendStatus.health?.features;
+  const mineruAvailable = Boolean(backendFeatures?.deep_extract);
+  const chandraAvailable = backendStatus.available && backendFeatures?.ocr_balanced !== false;
+  const pdfplumberAvailable = backendStatus.available && backendFeatures?.ocr_fast !== false;
+
+  const resolveRequestedEngine = useCallback((requested: 'pdfplumber' | 'chandra' | 'mineru') => {
+    if (requested === 'mineru' && !mineruAvailable) {
+      return chandraAvailable ? 'chandra' as const : 'pdfplumber' as const;
+    }
+
+    if (requested === 'chandra' && !chandraAvailable) {
+      return 'pdfplumber' as const;
+    }
+
+    return requested;
+  }, [mineruAvailable, chandraAvailable]);
+
+  const summarizeLayout = (layout?: {
+    text_blocks?: number;
+    tables?: number;
+    formulas?: number;
+    images?: number;
+    figures?: number;
+  }) => {
+    if (!layout) return undefined;
+    const parts: string[] = [];
+    if (layout.tables) parts.push(`${layout.tables} table${layout.tables === 1 ? '' : 's'}`);
+    if (layout.formulas) parts.push(`${layout.formulas} formula${layout.formulas === 1 ? '' : 's'}`);
+    if (layout.images) parts.push(`${layout.images} image${layout.images === 1 ? '' : 's'}`);
+    if (layout.text_blocks) parts.push(`${layout.text_blocks} text block${layout.text_blocks === 1 ? '' : 's'}`);
+    return parts.length ? parts.join(', ') : undefined;
+  };
+
+  const formatFallbackReason = (reason?: string) => {
+    if (!reason) return undefined;
+    return reason.replace(/_/g, ' ');
+  };
+
+  useEffect(() => {
+    if (backendStatus.checking) return;
+
+    if (!backendStatus.available) {
+      console.warn('[OCRTool] Backend OCR queue unavailable');
+      return;
+    }
+
+    console.info('[OCRTool] Backend OCR capabilities', {
+      ocr: backendFeatures?.ocr,
+      ocr_fast: backendFeatures?.ocr_fast,
+      ocr_balanced: backendFeatures?.ocr_balanced,
+      deep_extract: backendFeatures?.deep_extract,
+      mineru_version: backendFeatures?.mineru_version,
+      deep_extract_gpu: backendFeatures?.deep_extract_gpu,
+      deep_extract_compute_reason: backendFeatures?.deep_extract_compute_reason,
+    });
+  }, [backendStatus.available, backendStatus.checking, backendFeatures]);
+
+  useEffect(() => {
+    if (backendStatus.checking || !backendStatus.available) return;
+
+    const resolvedMode = resolveRequestedEngine(ocrMode);
+    if (resolvedMode !== ocrMode) {
+      console.warn('[OCRTool] Requested OCR engine unavailable, switching engine', {
+        requested: ocrMode,
+        resolved: resolvedMode,
+      });
+      setOcrMode(resolvedMode);
+      setStatusMessage(`Selected OCR engine unavailable. Switched to ${resolvedMode}.`);
+    }
+  }, [backendStatus.available, backendStatus.checking, ocrMode, resolveRequestedEngine]);
 
   const handleFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
     const list = event.target.files ? Array.from(event.target.files) : [];
@@ -67,6 +141,11 @@ export const OCRTool: React.FC = () => {
   const handleRunOCR = async () => {
     if (!files.length) return;
 
+    if (!backendStatus.available) {
+      setStatusMessage('Python backend is offline. OCR job queue is unavailable until the backend is running.');
+      return;
+    }
+
     setRunning(true);
     setBrowserHealthWarning(false);
     setStatusMessage('Starting OCR jobs...');
@@ -79,13 +158,45 @@ export const OCRTool: React.FC = () => {
       mimeType: file.type,
       stage: 'queued' as const,
       progress: 0,
+      requestedEngine: ocrMode,
     })));
 
     // Start OCR job for each file
     for (const file of files) {
       try {
-        const result = await StabilityManager.startOCRJob(file, ocrMode);
+        const requestedEngine = ocrMode;
+        const effectiveEngine = resolveRequestedEngine(requestedEngine);
+        const localFallbackReason = effectiveEngine !== requestedEngine
+          ? `${requestedEngine}_unavailable`
+          : undefined;
+
+        if (localFallbackReason) {
+          console.warn('[OCRTool] Falling back before job submission', {
+            fileName: file.name,
+            requestedEngine,
+            effectiveEngine,
+            reason: localFallbackReason,
+          });
+        }
+
+        const result = await StabilityManager.startOCRJob(file, effectiveEngine);
         jobIdsRef.current.set(file.name, result.job_id);
+
+        setResults(prev => prev.map(item => item.fileName === file.name ? {
+          ...item,
+          requestedEngine,
+          actualEngine: effectiveEngine,
+          fallbackReason: localFallbackReason,
+        } : item));
+
+        console.info('[OCRTool] OCR job queued', {
+          fileName: file.name,
+          jobId: result.job_id,
+          requestedEngine,
+          effectiveEngine,
+          fileSizeMB: result.file_size_mb,
+          canStartImmediately: result.can_start_immediately,
+        });
 
         setStatusMessage(`${file.name}: Job started (${result.file_size_mb}MB)`);
 
@@ -109,7 +220,7 @@ export const OCRTool: React.FC = () => {
    */
   const pollSingleJobSafely = useCallback(async (fileName: string, jobId: string) => {
     try {
-      await StabilityManager.pollJobSafely(
+      const finalStatus = await StabilityManager.pollJobSafely(
         jobId,
         (jobStatus: JobStatus) => {
           // Update result with job status
@@ -132,10 +243,14 @@ export const OCRTool: React.FC = () => {
               jobId,
               progress: jobStatus.progress,
               stage: stageMap[jobStatus.status] ?? 'processing',
+              requestedEngine: jobStatus.output?.requested_engine ?? r.requestedEngine,
+              actualEngine: jobStatus.output?.engine ?? r.actualEngine,
+              fallbackReason: jobStatus.output?.fallback_reason ?? r.fallbackReason,
               estimatedRemainingSec: jobStatus.estimated_remaining_sec,
               error: jobStatus.error,
               text: jobStatus.output?.markdown || '',
               processingMode: jobStatus.output?.processing_mode,
+              layoutSummary: summarizeLayout(jobStatus.output?.layout_elements),
               processingTimeMs: jobStatus.output?.processing_time_ms,
               renderMode: jobStatus.output?.markdown ? 'markdown' : undefined,
             };
@@ -147,6 +262,23 @@ export const OCRTool: React.FC = () => {
           }
         }
       );
+
+      console.info('[OCRTool] OCR job finished', {
+        fileName,
+        jobId,
+        status: finalStatus.status,
+        requestedEngine: finalStatus.output?.requested_engine,
+        selectedEngine: finalStatus.output?.selected_engine,
+        actualEngine: finalStatus.output?.engine,
+        processingMode: finalStatus.output?.processing_mode,
+        fallbackReason: finalStatus.output?.fallback_reason,
+      });
+
+      if (finalStatus.status === 'completed' && finalStatus.output?.fallback_reason) {
+        setStatusMessage(
+          `${fileName}: requested ${finalStatus.output.requested_engine}, ran ${finalStatus.output.engine} (${formatFallbackReason(finalStatus.output.fallback_reason)}).`
+        );
+      }
     } catch (error: any) {
       console.error(`Job polling failed for ${fileName}:`, error);
       setResults(prev => prev.map(r =>
@@ -175,7 +307,7 @@ export const OCRTool: React.FC = () => {
   }, []);
 
 
-  const handleSaveResult = (result: DisplayResult) => {
+  const handleSaveResult = async (result: DisplayResult) => {
     if (!result.text) return;
     const doc = KnowledgeBaseService.createDocument({
       title: `OCR: ${result.fileName}`,
@@ -187,7 +319,14 @@ export const OCRTool: React.FC = () => {
         ...(result.renderMode === 'markdown' ? ['deep-extract'] : [])
       ]
     });
-    addKnowledgeDocument(doc);
+    await addKnowledgeDocument(doc);
+    console.info('[OCRTool] OCR result saved to knowledge base', {
+      title: doc.title,
+      fileName: result.fileName,
+      chunkCount: doc.chunks?.length || 0,
+      requestedEngine: result.requestedEngine,
+      actualEngine: result.actualEngine,
+    });
     recordToolHistory({
       id: generateId(),
       tool: 'ocr',
@@ -203,9 +342,9 @@ export const OCRTool: React.FC = () => {
     setResults(prev => prev.map(r => r.fileName === result.fileName ? { ...r, stage: 'saved' as any } : r));
   };
 
-  const handleSaveAll = () => {
+  const handleSaveAll = async () => {
     let savedCount = 0;
-    results.forEach(result => {
+    for (const result of results) {
       if (result.stage === 'done' && result.text) {
         const doc = KnowledgeBaseService.createDocument({
           title: `OCR: ${result.fileName}`,
@@ -217,7 +356,14 @@ export const OCRTool: React.FC = () => {
             ...(result.renderMode === 'markdown' ? ['deep-extract'] : [])
           ]
         });
-        addKnowledgeDocument(doc);
+        await addKnowledgeDocument(doc);
+        console.info('[OCRTool] OCR result saved to knowledge base', {
+          title: doc.title,
+          fileName: result.fileName,
+          chunkCount: doc.chunks?.length || 0,
+          requestedEngine: result.requestedEngine,
+          actualEngine: result.actualEngine,
+        });
         recordToolHistory({
           id: generateId(),
           tool: 'ocr',
@@ -231,7 +377,7 @@ export const OCRTool: React.FC = () => {
         });
         savedCount++;
       }
-    });
+    }
     
     if (savedCount > 0) {
       setStatusMessage(`Successfully saved ${savedCount} document(s) to the Knowledge Base.`);
@@ -243,7 +389,7 @@ export const OCRTool: React.FC = () => {
     }
   };
 
-  const isRunDisabled = !files.length || running;
+  const isRunDisabled = !files.length || running || backendStatus.checking || !backendStatus.available;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-10">
@@ -289,18 +435,21 @@ export const OCRTool: React.FC = () => {
           <span className="uppercase tracking-wide text-[10px]">Engine:</span>
           <button
             onClick={() => setOcrMode('pdfplumber')}
+            disabled={!pdfplumberAvailable}
             className={`px-3 py-1 rounded-full border text-[11px] font-semibold ${ocrMode === 'pdfplumber' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:border-primary-400' : 'border-slate-200 bg-white text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300'}`}
           >
             Fast (pdfplumber)
           </button>
           <button
             onClick={() => setOcrMode('chandra')}
+            disabled={!chandraAvailable}
             className={`px-3 py-1 rounded-full border text-[11px] font-semibold ${ocrMode === 'chandra' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:border-primary-400' : 'border-slate-200 bg-white text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300'}`}
           >
             Balanced (Chandra)
           </button>
           <button
             onClick={() => setOcrMode('mineru')}
+            disabled={!mineruAvailable}
             className={`px-3 py-1 rounded-full border text-[11px] font-semibold ${ocrMode === 'mineru' ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:border-primary-400' : 'border-slate-200 bg-white text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300'}`}
           >
             Advanced (MinerU)
@@ -310,6 +459,24 @@ export const OCRTool: React.FC = () => {
             {ocrMode === 'chandra' && 'Balanced speed and quality with layout awareness'}
             {ocrMode === 'mineru' && 'Best for complex PDFs with tables and formulas'}
           </span>
+        </div>
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 px-4 py-3 text-xs text-slate-600 dark:text-slate-300">
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <span>Backend: {backendStatus.checking ? 'Checking…' : backendStatus.available ? 'Connected' : 'Offline'}</span>
+            <span>Fast OCR: {pdfplumberAvailable ? 'Ready' : 'Unavailable'}</span>
+            <span>Balanced OCR: {chandraAvailable ? 'Ready' : 'Unavailable'}</span>
+            <span>MinerU: {mineruAvailable ? 'Ready' : 'Unavailable'}</span>
+          </div>
+          {!backendStatus.available && (
+            <div className="mt-2 text-amber-700 dark:text-amber-300">
+              OCR jobs on this page require the Python backend to be running.
+            </div>
+          )}
+          {backendStatus.available && !mineruAvailable && (
+            <div className="mt-2 text-amber-700 dark:text-amber-300">
+              MinerU is not installed or not healthy. Heavy OCR will fall back to Chandra/pdfplumber until deep extract is enabled.
+            </div>
+          )}
         </div>
       </div>
 
@@ -385,6 +552,9 @@ export const OCRTool: React.FC = () => {
               )}
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {result.mimeType} {result.processingMode ? `| Mode: ${result.processingMode}` : ''}
+                {result.requestedEngine ? ` | Requested: ${result.requestedEngine}` : ''}
+                {result.actualEngine ? ` | Actual: ${result.actualEngine}` : ''}
+                {result.fallbackReason ? ` | Fallback: ${formatFallbackReason(result.fallbackReason)}` : ''}
                 {result.processingTimeMs ? ` | ${(result.processingTimeMs / 1000).toFixed(1)}s` : ''}
                 {result.layoutSummary ? ` | ${result.layoutSummary}` : ''}
               </p>

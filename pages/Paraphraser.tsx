@@ -53,6 +53,7 @@ export const Paraphraser: React.FC = () => {
   const [showDiff, setShowDiff] = useState(false);
   const [showCompareAll, setShowCompareAll] = useState(false);
   const [shortCircuited, setShortCircuited] = useState(false);
+  const outputPanelRef = useRef<HTMLDivElement>(null);
   
   // QuillBot-style additional options
   const [phraseFlip, setPhraseFlip] = useState(false);
@@ -371,8 +372,32 @@ export const Paraphraser: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  useEffect(() => {
+    const logScrollDiagnostics = (phase: string) => {
+      const panel = outputPanelRef.current;
+      if (!panel) return;
+      const style = window.getComputedStyle(panel);
+      console.info('[Paraphraser][ScrollDiag] output panel', {
+        phase,
+        overflowY: style.overflowY,
+        clientHeight: panel.clientHeight,
+        scrollHeight: panel.scrollHeight,
+        canScroll: panel.scrollHeight > panel.clientHeight,
+      });
+    };
+
+    logScrollDiagnostics('render');
+    const t = window.setTimeout(() => logScrollDiagnostics('post-render'), 200);
+    const onResize = () => logScrollDiagnostics('resize');
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [outputText, outputHtml, paraphraserState.isLoading, candidates.length, showDiff]);
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6 h-full flex flex-col">
+    <div className="max-w-6xl mx-auto space-y-6 h-full min-h-0 flex flex-col">
       <div className="flex flex-col space-y-4 shrink-0">
         <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Paraphraser</h2>
         
@@ -551,13 +576,13 @@ export const Paraphraser: React.FC = () => {
       <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0">
         
         {/* Input Card */}
-        <div className={`flex-1 bg-white dark:bg-dark-surface rounded-xl shadow-sm border flex flex-col overflow-hidden focus-within:ring-2 focus-within:ring-primary-500/50 transition-shadow ${isOverLimit ? 'border-red-300 ring-2 ring-red-100' : 'border-slate-200 dark:border-dark-border'}`}>
+        <div className={`flex-1 min-h-0 bg-white dark:bg-dark-surface rounded-xl shadow-sm border flex flex-col overflow-hidden focus-within:ring-2 focus-within:ring-primary-500/50 transition-shadow ${isOverLimit ? 'border-red-300 ring-2 ring-red-100' : 'border-slate-200 dark:border-dark-border'}`}>
           <div className="p-3 border-b border-slate-100 dark:border-dark-border flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
             <span className="text-xs font-bold text-slate-500 uppercase">Input Text</span>
             {isOverLimit && <span className="text-xs font-bold text-red-500">CONTEXT LIMIT EXCEEDED</span>}
           </div>
           <textarea
-            className="flex-1 w-full p-6 resize-none outline-none bg-transparent text-slate-700 dark:text-slate-200 placeholder-slate-400 text-lg leading-relaxed font-normal"
+            className="flex-1 w-full p-6 resize-none outline-none bg-transparent text-slate-700 dark:text-slate-200 placeholder-slate-400 text-lg leading-relaxed font-normal overflow-y-auto custom-scrollbar"
             placeholder="Paste text to rephrase..."
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
@@ -576,7 +601,7 @@ export const Paraphraser: React.FC = () => {
         </div>
 
         {/* Output Card */}
-        <div className="flex-1 bg-white dark:bg-dark-surface rounded-xl shadow-sm border border-slate-200 dark:border-dark-border flex flex-col overflow-hidden relative group">
+        <div className="flex-1 min-h-0 bg-white dark:bg-dark-surface rounded-xl shadow-sm border border-slate-200 dark:border-dark-border flex flex-col overflow-hidden relative group">
           <div className="p-3 border-b border-slate-100 dark:border-dark-border flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
              <div className="flex items-center space-x-3">
                <span className="text-xs font-bold text-primary-600 dark:text-primary-400 uppercase">Paraphrased Output</span>
@@ -596,7 +621,7 @@ export const Paraphraser: React.FC = () => {
                </button>
              )}
           </div>
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div ref={outputPanelRef} className="flex-1 min-h-0 flex flex-col overflow-hidden">
             {/* Output Panel - now reading from paraphraserState.isLoading */}
             {paraphraserState.isLoading ? (
               <div className="flex-1 flex flex-col items-center justify-center space-y-4 bg-slate-50 dark:bg-dark-surface/50">
@@ -626,7 +651,7 @@ export const Paraphraser: React.FC = () => {
             ) : (
               showDiff && candidates[selectedCandidateIndex]?.highlightedDiff ? (
                 <div
-                  className="flex-1 p-6 overflow-auto text-slate-700 dark:text-slate-200 text-lg leading-relaxed"
+                  className="flex-1 min-h-0 p-6 overflow-auto custom-scrollbar text-slate-700 dark:text-slate-200 text-lg leading-relaxed"
                   dangerouslySetInnerHTML={{ __html: candidates[selectedCandidateIndex].highlightedDiff }}
                 />
               ) : (
@@ -634,7 +659,7 @@ export const Paraphraser: React.FC = () => {
                   value={outputHtml}
                   onChange={handleOutputChange}
                   placeholder="Paraphrased text with formatting will appear here..."
-                  className="flex-1 bg-white dark:bg-dark-surface"
+                  className="flex-1 min-h-0 bg-white dark:bg-dark-surface"
                 />
               )
             )}

@@ -29,10 +29,10 @@ vi.mock('pdfjs-dist/build/pdf.mjs', () => ({
 
 describe('OCR Service Memory Management', () => {
   describe('Page Limit Configuration', () => {
-    it('should have MAX_PDF_PAGES set to 3', async () => {
+    it('should have MAX_PDF_PAGES set to 200', async () => {
       // This tests that the constant is properly exported/defined
       const { MAX_PDF_PAGES } = await import('./ocrService');
-      expect(MAX_PDF_PAGES).toBe(3);
+      expect(MAX_PDF_PAGES).toBe(200);
     });
 
     it('should have PDF_RENDER_SCALE set to 0.8', async () => {

@@ -134,9 +134,9 @@ export const RichEditor = forwardRef<unknown, RichEditorProps>(
     useImperativeHandle(ref, () => ({ editor }));
 
     return (
-      <div className={`rich-editor flex flex-col ${className ?? ''}`}>
+      <div className={`rich-editor flex flex-col min-h-0 h-full ${className ?? ''}`}>
         {editor && <Toolbar editor={editor} />}
-        <EditorContent editor={editor} className="rich-editor-body flex-1" />
+        <EditorContent editor={editor} className="rich-editor-body flex-1 min-h-0 overflow-y-auto custom-scrollbar" />
       </div>
     );
   }
